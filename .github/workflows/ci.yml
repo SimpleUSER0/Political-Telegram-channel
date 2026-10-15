@@ -24,7 +24,7 @@ jobs:
           POSTGRES_DB: newsroom_test
         ports: ['5432:5432']
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U newsroom -d newsroom_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -61,3 +61,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t political-newsroom:test .
+      - name: Start the container without live credentials
+        run: docker run --detach --name political-newsroom-smoke --publish 127.0.0.1:8080:8080 political-newsroom:test
+      - name: Check container health and safe unconfigured readiness
+        run: |
+          curl --fail --retry 10 --retry-all-errors --retry-delay 1 --max-time 2 http://127.0.0.1:8080/health
+          status=$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/ready)
+          test "$status" = 503
+      - name: Container logs and cleanup
+        if: always()
+        run: |
+          docker logs political-newsroom-smoke || true
+          docker rm --force political-newsroom-smoke || true

@@ -17,19 +17,21 @@
 - Actual Uvicorn process startup: `/health` returned 200; `/ready` returned 503 without live configuration.
 - Full runtime installed from the hash-locked requirements in a separate environment; application imports checked.
 
-## External blockers actually observed
+## GitHub delivery
 
-- GitHub `create_file` returned 403: `Resource not accessible by integration`.
-- GitHub installation 168970598 has `repository_selection=selected`; this new repository is not
-  among its four permitted repositories. Public reads do not imply write permission.
-- Add **Political-Telegram-channel** at https://github.com/settings/installations/168970598 and save.
+- Initial upload was blocked by repository selection. Access was granted and verified on 2026-10-16.
+- The complete implementation was uploaded to `feature/political-newsroom-foundation`.
+- Review: https://github.com/SimpleUSER0/Political-Telegram-channel/pull/1
+- Remote SQLite/PostgreSQL and Docker checks are in progress; inspect the exact workflow run for results.
+
+## Remaining infrastructure blocker
+
 - Railway `create_project` failed: `Free plan resource provision limit exceeded. Please upgrade to provision more resources!`
 - No Railway project, service, database, domain, secret or deployment was created or changed.
 
 ## Not yet verified
 
-- GitHub push/PR/CI; repository remains empty because the write attempt failed.
-- Real PostgreSQL concurrency/migrations and Docker image build (configured in CI but not executed).
+- Remote PostgreSQL/concurrency and Docker build/runtime results are pending CI completion.
 - Live OpenAI model/key/Web Search behavior and billing.
 - Live source/Commons fetch access and real photo relevance/rights.
 - New Telegram bot/channel permissions, webhook delivery and live approval/publishing.

@@ -173,7 +173,12 @@ def test_unicode_telegram_limit():
 
 def test_production_requires_postgres():
     with pytest.raises(ValidationError):
-        Settings(_env_file=None, app_env="production", admin_api_token="a" * 40)
+        Settings(
+            _env_file=None,
+            app_env="production",
+            admin_api_token="a" * 40,
+            database_url="sqlite+aiosqlite:///./production-not-allowed.db",
+        )
 
 
 def test_existing_tech_channel_protected():

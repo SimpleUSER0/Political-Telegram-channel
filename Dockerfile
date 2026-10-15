@@ -1,5 +1,6 @@
 FROM python:3.12-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
+    DATABASE_URL=sqlite+aiosqlite:////tmp/political-agent.db
 WORKDIR /app
 COPY pyproject.toml requirements.lock ./
 RUN pip install --require-hashes -r requirements.lock
