@@ -1,5 +1,18 @@
 # Validation record
 
+## Observed remote result — 2026-10-16
+
+Implementation commit `db9c11064ee91d65585feedf88b556d30d9aef62` passed all three jobs:
+93 tests on SQLite, 93 tests on PostgreSQL 17, and Docker build plus non-root runtime smoke.
+Alembic migration/drift checks passed on both backends. `/health` succeeded in the container;
+`/ready` correctly returned 503 without live credentials.
+
+Run: https://github.com/SimpleUSER0/Political-Telegram-channel/actions/runs/38809678310
+
+The first PostgreSQL run exposed a test that inherited DATABASE_URL from CI instead of explicitly
+selecting SQLite for the production-rejection check. The corrected test passed on both backends.
+Live service deployment, provider access and Telegram publishing remain unverified.
+
 Local checks are run without real OpenAI or Telegram calls. Test data is fictional and uses
 reserved `.example` domains. Provider clients and source fetches are replaced only inside tests.
 
