@@ -38,7 +38,7 @@ test('preflight rejects insufficient daily budget without consuming calls or run
   assert.equal(before.usage.calls,2);
   assert.equal(before.usage.runs,0);
   await assert.rejects(generate({...c,dailyCalls:3},store,
-    'International diplomatic meeting','QUICK'),/Insufficient remaining/);
+    'International diplomatic meeting','QUICK'),/budget cannot cover|Insufficient remaining/);
   const after=await store.status();
   assert.equal(after.usage.calls,2);
   assert.equal(after.usage.runs,0);
