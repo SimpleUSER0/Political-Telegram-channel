@@ -74,6 +74,7 @@ test('managed webhook setup: '+scenario,async()=>{
     const job=await db.prepare("SELECT * FROM cf_jobs WHERE id='setup-test'").first();
     const result=await db.prepare("SELECT value FROM cf_meta WHERE key='webhook_registration'").first();
     assert.equal(job.status,scenario==='success'?'done':'failed');
+    if(scenario==='wrong bot')assert.match(job.error,/@another_bot/);
     assert.equal(registrations,['success','wrong webhook'].includes(scenario)?1:0);
     if(scenario==='success') {
       assert.equal(JSON.parse(result.value).verified,true);
