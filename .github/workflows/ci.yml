@@ -10,6 +10,19 @@ concurrency:
   group: checks-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  cloudflare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run check:cloudflare
+      - run: npm run test:cloudflare
+      - name: Build the actual Worker without deploying or using credentials
+        run: npx wrangler deploy --dry-run --outdir /tmp/political-worker
   test:
     runs-on: ubuntu-latest
     strategy:
