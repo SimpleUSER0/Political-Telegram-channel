@@ -29,8 +29,11 @@ export async function telegram(c,method,data) {
 }
 export async function verifyIdentity(c) {
   const bot=await telegram(c,'getMe',{});
-  if (!bot?.is_bot || String(bot.username).toLowerCase()!==c.username)
-    throw new Halt('Bot identity does not match EXPECTED_BOT_USERNAME');
+  const username=String(bot?.username || '').toLowerCase();
+  if (!bot?.is_bot || !/^[a-z0-9_]+bot$/.test(username)) throw new Halt('Invalid Telegram bot identity');
+  if (username==='digitalera_global_bot') throw new Halt('Existing technology bot @digitalera_global_bot cannot be used');
+  if (username!==c.username)
+    throw new Halt('Bot identity mismatch; token belongs to @'+username);
   return bot;
 }
 export async function verifyChannel(c) {
@@ -216,7 +219,9 @@ export async function drain(c,store,kind,limit=1) {
       // Persist only controlled errors; network exception strings can contain credential URLs.
       const reason=error instanceof Halt?error.message.slice(0,250):'Internal failure; inspect Worker logs';
       await store.finish(job,reason);
-      try { await tell(c,'დავალება შეჩერდა: '+reason); } catch {}
+      // Setup may fail because the credential belongs to a different bot. Never send
+      // even a private failure notification through an unverified setup identity.
+      if (kind!=='setup') { try { await tell(c,'დავალება შეჩერდა: '+reason); } catch {} }
       console.warn('Newsroom job stopped',kind,error instanceof Halt?'validation':'runtime');
     }
   }

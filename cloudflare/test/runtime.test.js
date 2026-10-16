@@ -31,17 +31,17 @@ test('workerd initializes real D1 schema, handles health and rejects unconfigure
   } finally {await runtime.dispose();}
 });
 
-for (const scenario of ['success','wrong bot','wrong channel','wrong webhook'])
+for (const scenario of ['success','wrong bot','protected bot','wrong channel','wrong webhook'])
 test('managed webhook setup: '+scenario,async()=>{
   let registrations=0,posts=0;
   const token='555:test-only-token', secret='w'.repeat(40), base='https://political.example.com';
   const runtime=instance({OWNER_USER_ID:'123',TELEGRAM_BOT_TOKEN:token,
-    EXPECTED_BOT_USERNAME:'political_test_bot',CHANNEL_ID:'-100555',
+    EXPECTED_BOT_USERNAME:scenario==='protected bot'?'digitalera_global_bot':'political_test_bot',CHANNEL_ID:'-100555',
     WEBHOOK_SECRET:secret,ADMIN_API_TOKEN:'a'.repeat(40),PUBLIC_BASE_URL:base,
   },async request=>{
     const method=new URL(request.url).pathname.split('/').at(-1);
     if(method==='getMe')return Response.json({ok:true,result:{is_bot:true,
-      username:scenario==='wrong bot'?'another_bot':'political_test_bot'}});
+      username:scenario==='protected bot'?'digitalera_global_bot':scenario==='wrong bot'?'another_bot':'political_test_bot'}});
     if(method==='getChat')return Response.json({ok:true,result:{type:scenario==='wrong channel'?'private':'channel',
       username:'political_test_channel'}});
     if(method==='setWebhook') {
@@ -74,12 +74,13 @@ test('managed webhook setup: '+scenario,async()=>{
     const job=await db.prepare("SELECT * FROM cf_jobs WHERE id='setup-test'").first();
     const result=await db.prepare("SELECT value FROM cf_meta WHERE key='webhook_registration'").first();
     assert.equal(job.status,scenario==='success'?'done':'failed');
+    if(scenario==='wrong bot')assert.match(job.error,/@another_bot/);
     assert.equal(registrations,['success','wrong webhook'].includes(scenario)?1:0);
     if(scenario==='success') {
       assert.equal(JSON.parse(result.value).verified,true);
       assert.equal(posts,0);
       assert.ok(!result.value.includes(token));assert.ok(!result.value.includes(secret));
-    } else {assert.equal(result,null);assert.equal(posts,1);} // Private owner failure notice only.
+    } else {assert.equal(result,null);assert.equal(posts,0);} // Setup cannot send through an unverified identity.
   } finally {await runtime.dispose();}
 });
 
