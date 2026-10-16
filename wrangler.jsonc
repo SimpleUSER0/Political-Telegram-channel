@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "political-telegram-channel",
+  "main": "cloudflare/src/worker.js",
+  "compatibility_date": "2026-10-16",
+  "workers_dev": true,
+  "keep_vars": true,
+  "observability": {"enabled": true},
+  "triggers": {"crons": ["* * * * *"]},
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "political-telegram-channel-db"
+  }]
+}

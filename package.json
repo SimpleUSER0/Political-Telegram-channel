@@ -1,0 +1,14 @@
+{
+  "name": "political-telegram-channel-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22.13.0"},
+  "scripts": {
+    "test:cloudflare": "node --test cloudflare/test/*.test.js",
+    "check:cloudflare": "node --check cloudflare/src/worker.js && node --check cloudflare/src/research.js",
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {"wrangler": "4.151.0", "miniflare": "5.20261012.0-beta"}
+}
