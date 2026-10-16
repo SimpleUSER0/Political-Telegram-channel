@@ -22,16 +22,17 @@ test('unknown, stale, future and single-domain evidence are withheld',()=>{
   const stale='2026-09-01T12:00:00Z',future='2026-10-17T12:00:00Z';
   for(const other of [null,stale,future]){
     assert.throws(()=>requireDatedSources([story('bbc.com',recent,0),
-      story('civil.ge',other,1)],settings,instant),/dated sources/);
+      story('civil.ge',other,1)],settings,instant),/evidenced publication dates/);
   }
   assert.throws(()=>requireDatedSources([story('bbc.com',recent,0),
-    story('bbc.com',recent,1)],settings,instant),/dated sources/);
+    story('bbc.com',recent,1)],settings,instant),/evidenced publication dates/);
 });
 
 test('preflight rejects insufficient daily budget without consuming calls or runs',async()=>{
   const {c,store}=await fixture();
   await store.requireCallCapacity(4,4);
-  await store.reserve('calls',2);
+  await store.reserve('calls',4);
+  await store.reserve('calls',4);
   await assert.rejects(store.requireCallCapacity(4,3),/Insufficient remaining/);
   await store.requireCallCapacity(4,2);
   const before=await store.status();
