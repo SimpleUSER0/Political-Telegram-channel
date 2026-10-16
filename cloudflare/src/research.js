@@ -120,6 +120,21 @@ export async function fetchSource(rawUrl, c) {
   throw new Halt('Too many redirects');
 }
 
+// Reject undated or stale sources BEFORE spending a model call on verification.
+// A feed date is only admitted when the article and the final redirect belong to
+// the publisher. No date is invented and no source verification check is bypassed.
+export function requireDatedSources(sources,c,time=now()) {
+  const dated=sources.filter(source=>{
+    const iso=source.publication?.published_at;
+    const stamp=Date.parse(iso);
+    return typeof iso==='string' && /(?:Z|[+-]\\d\\d:\\d\\d)$/.test(iso) &&
+      Number.isFinite(stamp) && stamp>=time-c.age && stamp<=time+600000;
+  });
+  if(dated.length<2 || new Set(dated.map(s=>new URL(s.url).hostname)).size<2)
+    throw new Halt('Fewer than two fresh sources with evidenced publication dates');
+  return dated.map((source,id)=>({...source,id}));
+}
+
 export async function validateDraft(c,store,article,packet,sources) {
   validatePacket(packet,sources,c);
   validateArticle(article,packet,sources);
@@ -136,8 +151,12 @@ export async function generate(c,store,query,format) {
   if (!c.research || missing(c,true).length) throw new Halt('Research is disabled or not configured');
   if (!['FLASH','QUICK','STANDARD','DEEP'].includes(format) || typeof query!=='string' ||
       query.trim().length<3 || query.length>1000) throw new Halt('Invalid research request');
-  await store.reserve('runs',c.dailyRuns);
   const history = await store.history();
+  // Reserve the run only when the remaining daily call budget can cover an
+  // entire four/five-step workflow; avoid a predictable partial paid run.
+  const requiredCalls=(c.discovery==='feeds'?4:5)+(history.length?1:0);
+  await store.requireCallCapacity(c.dailyCalls,requiredCalls);
+  await store.reserve('runs',c.dailyRuns);
   const search = c.discovery==='feeds'?await discoverFeeds(c):await llm(c,store,`Find one important new political event matching the query.
 Collect 2-6 specific, recent news article URLs from independent sources. Give exact event and
 publication dates. Avoid all history events, including paraphrases. No suitable event is acceptable.`,
@@ -163,7 +182,7 @@ Return candidates=[] if evidence is inadequate. Never invent a URL or date.`,
   }
   const urls = [...new Set(selected.source_urls.map(u=>sourceUrl(u,c.domains)))];
   if (urls.length<2 || urls.length>6 || urls.some(u=>!allowed.has(u))) throw new Halt('Undiscovered source URL');
-  const sources=[];
+  const collected=[];
   for (const url of urls) {
     try {
       const source=await fetchSource(url,c);
@@ -171,13 +190,13 @@ Return candidates=[] if evidence is inadequate. Never invent a URL or date.`,
         const publication=feedPublication(search.articles,url,source.url);
         if(publication)source.publication=publication;
       }
-      if (!sources.some(s=>s.url===source.url)) sources.push({...source,id:sources.length});
+      if (!collected.some(s=>s.url===source.url)) collected.push(source);
     } catch (error) {
       // Do not replace failed sources with model memory or bypass publisher restrictions.
       if (!(error instanceof Halt) && error?.name!=='TimeoutError') console.warn('Source fetch unavailable');
     }
   }
-  if (sources.length<2) throw new Halt('Not enough accessible independent sources');
+  const sources=requireDatedSources(collected,c);
   const packet=await llm(c,store,`Assess ALL sources by numeric source_id. Identify publication
 dates from source content; use publication.published_at when publisher metadata supplies it.
 Do not confuse dateModified or the event date with publication time. Do not guess.
