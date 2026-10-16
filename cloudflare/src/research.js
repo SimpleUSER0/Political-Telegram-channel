@@ -127,7 +127,7 @@ export function requireDatedSources(sources,c,time=now()) {
   const dated=sources.filter(source=>{
     const iso=source.publication?.published_at;
     const stamp=Date.parse(iso);
-    return typeof iso==='string' && /(?:Z|[+-]\\d\\d:\\d\\d)$/.test(iso) &&
+    return typeof iso==='string' && /(?:Z|[+-]\d\d:\d\d)$/.test(iso) &&
       Number.isFinite(stamp) && stamp>=time-c.age && stamp<=time+600000;
   });
   if(dated.length<2 || new Set(dated.map(s=>new URL(s.url).hostname)).size<2)
