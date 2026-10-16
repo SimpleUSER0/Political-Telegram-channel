@@ -31,7 +31,7 @@ export async function geminiCall(c,store,day,instruction,data,schema,search) {
     '. Do not provide a memory-only answer. Include direct publisher URLs for the search sources.':'')}]},
     contents:[{role:'user',parts:[{text:JSON.stringify(data)}]}],
     generationConfig:{maxOutputTokens:c.maxTokens}};
-  if (schema) body.generationConfig.responseFormat={text:{mimeType:'application/json',schema}};
+  if (schema) body.generationConfig.responseFormat={text:{mimeType:'APPLICATION_JSON',schema}};
   // Separate search and JSON calls work with Gemini 2.5; no search+schema combination.
   if (search) body.tools=[{google_search:{}}];
   const response=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+c.model+':generateContent',{

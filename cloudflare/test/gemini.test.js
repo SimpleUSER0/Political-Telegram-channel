@@ -23,6 +23,7 @@ test('Gemini JSON goes to Google with a header secret and is validated locally',
     assert.ok(url.startsWith('https://generativelanguage.googleapis.com/'));
     assert.ok(!url.includes('offline-only'));assert.equal(options.headers['x-goog-api-key'],'offline-only');
     assert.deepEqual(JSON.parse(options.body).generationConfig.responseFormat.text.schema,resultSchema);
+    assert.equal(JSON.parse(options.body).generationConfig.responseFormat.text.mimeType,'APPLICATION_JSON');
     return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:'{"passed":true}'}]}}],
       usageMetadata:{promptTokenCount:10,candidatesTokenCount:5,thoughtsTokenCount:3}});
   };
