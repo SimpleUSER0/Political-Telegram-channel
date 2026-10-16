@@ -44,3 +44,15 @@ test('preflight rejects insufficient daily budget without consuming calls or run
   assert.equal(after.usage.calls,2);
   assert.equal(after.usage.runs,0);
 });
+
+test('unexpected errors name the failed stage without revealing raw secret-like messages',async()=>{
+  const {c,store}=await fixture();
+  store.history=async()=>{throw new TypeError('SECRET=untrusted-sensitive-value');};
+  await assert.rejects(generate(c,store,'International meeting','QUICK'),error=>{
+    assert.match(error.message,/Research execution failed at budget \(TypeError\)/);
+    assert.ok(!error.message.includes('untrusted-sensitive-value'));
+    return true;
+  });
+  const status=await store.status();
+  assert.equal(status.usage,null);
+});
