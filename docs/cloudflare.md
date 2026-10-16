@@ -35,6 +35,39 @@ The schema is initialized idempotently on first `/health` or authenticated reque
 
 ## Configure runtime variables and secrets
 
+### Gemini free-tier setup
+
+The Worker supports Gemini as well as OpenAI. For a Google AI Studio key use:
+
+| Type | Name | Value |
+|---|---|---|
+| Secret | `GEMINI_API_KEY` | Your Google AI Studio key |
+| Text | `AI_PROVIDER` | `gemini` |
+| Text | `GEMINI_MODEL` | `gemini-2.5-flash` |
+
+Do not put a Google key in `OPENAI_API_KEY`. In Gemini mode neither an OpenAI key nor
+`OPENAI_MODEL` is required. If `AI_PROVIDER` is absent, a `GEMINI_API_KEY` selects Gemini;
+otherwise the previous OpenAI default is preserved. Explicit `AI_PROVIDER=gemini` avoids ambiguity.
+No error or quota exhaustion triggers fallback to OpenAI or another model.
+
+Google's pricing page checked on 2026-10-16 lists Gemini 2.5 Flash text input/output and
+Google Search grounding within free-tier quotas. Account/model/region limits can change;
+a free key does not guarantee unlimited or uninterrupted use. Paid billing can incur charges.
+Gemini defaults to **1 research run and 12 API calls daily**, unless you explicitly configure
+different caps. A run uses about 5–6 model calls; an edit adds a fact check. HTTP 429 stops the job.
+
+Discovery requires actual Google Search grounding sources, not URLs written from model memory.
+Only exact Google grounding redirect URLs may resolve to allowed publisher domains. The API key
+stays in the Google request header and is never forwarded to publishers. JSON is also checked
+locally. The existing source retrieval, quote/date/origin checks and mandatory approval remain.
+Grounding metadata is retained in the draft's authenticated API response for inspection.
+Tests mock Google; live access still requires a closed pilot.
+
+References:
+- https://ai.google.dev/gemini-api/docs/pricing
+- https://ai.google.dev/gemini-api/docs/generate-content/structured-output
+- https://ai.google.dev/gemini-api/docs/generate-content/google-search
+
 After deployment: Worker → Settings → Variables and Secrets. These are **runtime** settings,
 not build variables. `keep_vars: true` preserves dashboard values across future deploys.
 
@@ -43,12 +76,15 @@ not build variables. `keep_vars: true` preserves dashboard values across future 
 | `TELEGRAM_BOT_TOKEN` | Secret; a **new independent political bot** |
 | `WEBHOOK_SECRET` | Secret; 32+ random URL-safe characters (`A-Z a-z 0-9 _ -`) |
 | `ADMIN_API_TOKEN` | Secret; 32+ random characters |
-| `OPENAI_API_KEY` | Secret; the political project's API key |
+| `GEMINI_API_KEY` | Secret in Gemini mode; Google AI Studio key |
+| `AI_PROVIDER` | `gemini` or `openai` |
+| `GEMINI_MODEL` | Gemini mode: `gemini-2.5-flash` (also the default) |
+| `OPENAI_API_KEY` | Secret in OpenAI mode only |
 | `EXPECTED_BOT_USERNAME` | New bot username, without `@` |
 | `OWNER_USER_ID` | Your numeric Telegram user ID |
 | `OWNER_CHAT_ID` | Your positive private chat ID (normally same as user ID) |
 | `CHANNEL_ID` | Separate political channel `@username` or `-100...` ID |
-| `OPENAI_MODEL` | Your account's model supporting Responses, Web Search and Structured Outputs |
+| `OPENAI_MODEL` | OpenAI mode only: model supporting Responses, Web Search and Structured Outputs |
 | `PUBLIC_BASE_URL` | The actual deployed `https://...workers.dev` origin |
 | `SOURCE_DOMAINS` | Comma-separated trusted **public** news/source domains; at least two |
 | `SOURCE_ORIGIN_GROUPS` | Optional JSON object mapping known related domains to a shared origin |
@@ -56,13 +92,13 @@ not build variables. `keep_vars: true` preserves dashboard values across future 
 | `PUBLISH_ENABLED` | Initially `false`; enable only for the closed test channel/pilot |
 | `SCHEDULE_ENABLED` | Initially `false`; cron still processes manually queued owner commands |
 | `SCHEDULE_HOURS` | Initially `[]`; later an array of hours in Asia/Tbilisi |
-| `MAX_DAILY_RUNS` | Default `4` |
-| `MAX_DAILY_CALLS` | Default `40` |
+| `MAX_DAILY_RUNS` | Gemini default `1`, OpenAI default `4` |
+| `MAX_DAILY_CALLS` | Gemini default `12`, OpenAI default `40` |
 | `MAX_OUTPUT_TOKENS` | Default `4000`, maximum `8000` |
 | `MAX_SOURCE_AGE_HOURS` | Default `48` |
 | `DRAFT_TTL_HOURS` | Default `12` |
 
-OpenAI requests can cost money when research is enabled. Daily run/call caps are hard atomic
+Provider requests may cost money depending on plan, billing and model. Daily run/call caps are hard atomic
 reservations; token/search counters reflect returned usage, not a guaranteed currency budget.
 The model is intentionally not hard-coded. Source domain choices remain an editorial decision;
 no source list is silently treated as trustworthy or independent. Never enter secrets in GitHub
@@ -86,7 +122,7 @@ channel before registering the webhook. It does not drop pending Telegram update
 is never performed implicitly on deployment/startup. There is no API endpoint for publishing posts.
 
 5. `/start` should now respond; `/status` shows missing configuration and queue counters.
-6. Enable `RESEARCH_ENABLED=true` for a deliberately limited paid research test. Send `/news ...`.
+6. Enable `RESEARCH_ENABLED=true` for a deliberately limited research test. Send `/news ...`.
 7. The minute cron drains the durable queue. A draft appears with **Publish / Edit / Cancel** and
    source links. Human verification remains necessary: inspect sources, dates and attribution.
 8. Enable `PUBLISH_ENABLED=true` only for the test publication. Verify one post, then press the

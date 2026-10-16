@@ -6,7 +6,7 @@ import {payload} from './helpers.js';
 
 function modules(extraMain) {
   const result={};
-  for(const name of ['worker','core','store','schema','research'])result[name+'.js']={
+  for(const name of ['worker','core','store','schema','research','gemini'])result[name+'.js']={
     type:'esm',contents:readFileSync(new URL('../src/'+name+'.js',import.meta.url),'utf8'),
   };
   if(extraMain)result['harness.js']={type:'esm',contents:extraMain};
@@ -31,7 +31,8 @@ test('workerd initializes real D1 schema, handles health and rejects unconfigure
   } finally {await runtime.dispose();}
 });
 
-test('workerd runs research, real HTMLRewriter evidence extraction, approval and single publication with mocked APIs',async()=>{
+for(const provider of ['openai','gemini'])
+test('workerd runs '+provider+' research, real HTMLRewriter extraction, approval and single publication with mocked APIs',async()=>{
   let calls=0,sends=0;
   const p=payload(),time=new Date().toISOString();
   const runtime=instance({
@@ -39,17 +40,18 @@ test('workerd runs research, real HTMLRewriter evidence extraction, approval and
     EXPECTED_BOT_USERNAME:'political_test_bot',CHANNEL_ID:'-100555',
     WEBHOOK_SECRET:'w'.repeat(40),ADMIN_API_TOKEN:'a'.repeat(40),OPENAI_API_KEY:'test-only',
     OPENAI_MODEL:'test-only',SOURCE_DOMAINS:'example.com,example.org',
+    AI_PROVIDER:provider,GEMINI_API_KEY:'gemini-test-only',GEMINI_MODEL:'gemini-2.5-flash',
     RESEARCH_ENABLED:'true',PUBLISH_ENABLED:'true',
   },async request=>{
     const url=new URL(request.url);
-    if(url.hostname==='api.openai.com') {
+    if(['api.openai.com','generativelanguage.googleapis.com'].includes(url.hostname)) {
       const body=await request.json();
       let result;
       if(body.tools) result={output:[{type:'web_search_call',action:{sources:[
         {url:'https://example.com/news'},{url:'https://example.org/news'}]}},
         {type:'message',content:[{type:'output_text',text:'A recent independent meeting report.'}]}]};
       else {
-        const properties=body.text.format.schema.properties;
+        const properties=(body.text?.format.schema || body.generationConfig?.responseFormat.text.schema).properties;
         let data;
         if(properties.candidates)data={candidates:[{event_key:'meeting-'+time,topic:'Meeting',event_at:time,
           source_urls:['https://example.com/news','https://example.org/news']}]};
@@ -60,6 +62,13 @@ test('workerd runs research, real HTMLRewriter evidence extraction, approval and
         result={output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(data)}]}]};
       }
       calls++;
+      if(provider==='gemini') {
+        const text=result.output.find(x=>x.type==='message').content[0].text;
+        return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text}]},
+          ...(body.tools?{groundingMetadata:{webSearchQueries:['meeting news'],groundingChunks:[
+            {web:{uri:'https://example.com/news'}},{web:{uri:'https://example.org/news'}}]}}:{})}],
+          usageMetadata:{promptTokenCount:10,candidatesTokenCount:20}});
+      }
       return Response.json({...result,status:'completed',usage:{input_tokens:10,output_tokens:20}});
     }
     if(['example.com','example.org'].includes(url.hostname))return new Response(

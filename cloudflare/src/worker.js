@@ -137,7 +137,7 @@ async function handleControl(c,store,payload,job) {
   const [rawCommand,...args]=first.trim().split(/\s+/), command=rawCommand.split('@')[0];
   if (command==='/start' || command==='/help') return tell(c,
     'პოლიტიკური რედაქცია\n/news თემა — ახალი კვლევა\n/pending — მონახაზები\n/show ID — მონახაზი\n/status — სტატუსი\n/edit ID:VERSION — სათაური, ცარიელი ხაზი, ტექსტი\n\nყველა პოსტი საჭიროებს შენს Publish-ს. კვლევა სრულდება დაგეგმილი Worker-ით.');
-  if (command==='/status') return tell(c,JSON.stringify({research:c.research,publish:c.publish,
+  if (command==='/status') return tell(c,JSON.stringify({provider:c.provider,model:c.model,research:c.research,publish:c.publish,
     missing:missing(c,true),...await store.status()},null,2));
   if (command==='/pending') {
     const drafts=await store.pending();
@@ -212,7 +212,7 @@ async function admin(request,url,c,store) {
       !await equalSecret(request.headers.get('Authorization'), 'Bearer '+c.env.ADMIN_API_TOKEN))
     return json({error:'Unauthorized'},401);
   if (request.method==='GET' && url.pathname==='/admin/status')
-    return json({missing:missing(c,true),research:c.research,publish:c.publish,...await store.status()});
+    return json({provider:c.provider,model:c.model,missing:missing(c,true),research:c.research,publish:c.publish,...await store.status()});
   if (request.method==='GET' && url.pathname==='/admin/drafts') return json(await store.pending());
   const detail=/^\/admin\/drafts\/([a-f0-9]{20})$/.exec(url.pathname);
   if (request.method==='GET' && detail) {

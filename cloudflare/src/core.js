@@ -13,6 +13,8 @@ export function number(value, fallback, min, max) {
   return n;
 }
 export function config(env) {
+  const provider=String(env.AI_PROVIDER || (env.GEMINI_API_KEY?'gemini':'openai')).toLowerCase();
+  if (!['gemini','openai'].includes(provider)) throw new Halt('AI_PROVIDER must be gemini or openai');
   let origins = {}, hours = [];
   try {
     origins = JSON.parse(env.SOURCE_ORIGIN_GROUPS || '{}');
@@ -34,9 +36,10 @@ export function config(env) {
     ownerChat: String(env.OWNER_CHAT_ID || env.OWNER_USER_ID || ''), channel,
     username: String(env.EXPECTED_BOT_USERNAME || '').replace(/^@/, '').toLowerCase(),
     research: enabled(env.RESEARCH_ENABLED), publish: enabled(env.PUBLISH_ENABLED),
-    schedule: enabled(env.SCHEDULE_ENABLED), model: env.OPENAI_MODEL || '',
-    dailyRuns: number(env.MAX_DAILY_RUNS, 4, 1, 24),
-    dailyCalls: number(env.MAX_DAILY_CALLS, 40, 1, 200),
+    schedule: enabled(env.SCHEDULE_ENABLED), provider,
+    model: provider==='gemini'?(env.GEMINI_MODEL || 'gemini-2.5-flash'):(env.OPENAI_MODEL || ''),
+    dailyRuns: number(env.MAX_DAILY_RUNS, provider==='gemini'?1:4, 1, 24),
+    dailyCalls: number(env.MAX_DAILY_CALLS, provider==='gemini'?12:40, 1, 200),
     maxTokens: number(env.MAX_OUTPUT_TOKENS, 4000, 512, 8000),
     age: number(env.MAX_SOURCE_AGE_HOURS, 48, 1, 168) * 3600000,
     ttl: number(env.DRAFT_TTL_HOURS, 12, 1, 48) * 3600000,
@@ -52,11 +55,38 @@ export function missing(c, research = false) {
   if (String(c.env.ADMIN_API_TOKEN || '').length < 32) result.push('ADMIN_API_TOKEN (32+ chars)');
   if (!/^(@[A-Za-z0-9_]{5,}|-100\d+)$/.test(c.channel)) result.push('CHANNEL_ID');
   if (research) {
-    if (!c.env.OPENAI_API_KEY) result.push('OPENAI_API_KEY');
-    if (!c.model) result.push('OPENAI_MODEL');
+    if (c.provider==='gemini') {
+      if (!c.env.GEMINI_API_KEY) result.push('GEMINI_API_KEY');
+      if (!/^gemini-[a-zA-Z0-9.\-]+$/.test(c.model)) result.push('GEMINI_MODEL');
+    } else {
+      if (!c.env.OPENAI_API_KEY) result.push('OPENAI_API_KEY');
+      if (!c.model) result.push('OPENAI_MODEL');
+    }
     if (c.domains.length < 2) result.push('SOURCE_DOMAINS (at least 2)');
   }
   return result;
+}
+// Enforce the small JSON Schema vocabulary used by this newsroom, including types
+// and unknown properties; provider-side structured output is not a trust boundary.
+export function validateJson(value,schema,depth=0) {
+  if (depth>20) throw new Halt('Model JSON nesting limit exceeded');
+  const type=value===null?'null':Array.isArray(value)?'array':typeof value;
+  const types=Array.isArray(schema.type)?schema.type:[schema.type];
+  if (!types.some(t=>t===type || (t==='integer' && Number.isInteger(value))))
+    throw new Halt('Model JSON type mismatch');
+  if (schema.enum && !schema.enum.includes(value)) throw new Halt('Model JSON enum mismatch');
+  if (type==='object') {
+    if ((schema.required || []).some(key=>!Object.hasOwn(value,key))) throw new Halt('Model JSON missing property');
+    for (const [key,item] of Object.entries(value)) {
+      if (!Object.hasOwn(schema.properties || {},key)) {
+        if (schema.additionalProperties===false) throw new Halt('Model JSON unexpected property');
+      } else validateJson(item,schema.properties[key],depth+1);
+    }
+  } else if (type==='array') {
+    if (value.length>200) throw new Halt('Model JSON array limit exceeded');
+    for (const item of value) validateJson(item,schema.items,depth+1);
+  }
+  return value;
 }
 export async function equalSecret(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) return false;
