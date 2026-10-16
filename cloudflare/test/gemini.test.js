@@ -36,6 +36,15 @@ test('free-tier 429 stops after one attempt, with no OpenAI fallback',async()=>{
   try{await assert.rejects(llm(c,store,'Check',{},resultSchema),/quota reached/);assert.equal(calls,1);}
   finally{globalThis.fetch=original;}
 });
+test('Google request errors identify malformed fields without exposing credentials or URLs',async()=>{
+  const {c,store}=await setup(),original=globalThis.fetch;
+  globalThis.fetch=async()=>Response.json({error:{status:'INVALID_ARGUMENT',
+    message:'Unknown field responseFormat; credential '+c.env.GEMINI_API_KEY+' at https://example.com/?key='+c.env.GEMINI_API_KEY}},{status:400});
+  try {await assert.rejects(llm(c,store,'Check',{},resultSchema),error=>{
+    assert.match(error.message,/INVALID_ARGUMENT.*Unknown field responseFormat/);
+    assert.ok(!error.message.includes(c.env.GEMINI_API_KEY));assert.ok(!error.message.includes('https://'));return true;
+  });}finally{globalThis.fetch=original;}
+});
 test('Gemini safety refusal and token truncation cannot yield a draft',async()=>{
   const {c,store}=await setup(),original=globalThis.fetch;
   try{for(const finishReason of ['SAFETY','MAX_TOKENS']){

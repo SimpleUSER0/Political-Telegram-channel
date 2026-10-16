@@ -139,6 +139,10 @@ webhook, then verifies `getWebhookInfo`. It records a non-secret summary in
 `cf_meta.webhook_registration` and an audit trail. Failed or interrupted jobs are not retried.
 No Telegram command or public request can enqueue setup jobs. This path needs D1 write access
 but does not require reading bot tokens, webhook secrets or the admin bearer token.
+The same infrastructure-only setup queue accepts `{"action":"check_ai"}` for one bounded,
+schema-validated availability request. It consumes the daily call budget, never a research run,
+and stores only provider/model/availability in `cf_meta.ai_diagnostic`. API failure messages
+redact the configured key and URLs before they enter the job error field.
 
 5. `/start` should now respond; `/status` shows missing configuration and queue counters.
 6. Enable `RESEARCH_ENABLED=true` for a deliberately limited research test. Send `/news ...`.

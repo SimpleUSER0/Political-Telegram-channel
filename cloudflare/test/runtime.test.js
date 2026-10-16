@@ -84,6 +84,31 @@ test('managed webhook setup: '+scenario,async()=>{
   } finally {await runtime.dispose();}
 });
 
+test('managed AI check uses one budgeted call, no research run and no Telegram messages',async()=>{
+  let calls=0;
+  const runtime=instance({OWNER_USER_ID:'123',TELEGRAM_BOT_TOKEN:'555:test-only-token',
+    EXPECTED_BOT_USERNAME:'political_test_bot',CHANNEL_ID:'-100555',WEBHOOK_SECRET:'w'.repeat(40),
+    ADMIN_API_TOKEN:'a'.repeat(40),GEMINI_API_KEY:'test-only-key',AI_PROVIDER:'gemini',
+    SOURCE_DOMAINS:'example.com,example.org'},async request=>{
+      assert.equal(new URL(request.url).hostname,'generativelanguage.googleapis.com');calls++;
+      return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:'{"available":true}'}]}}]});
+    },`import worker from './worker.js';export default {async fetch(request,env,ctx){
+      if(new URL(request.url).pathname==='/__test/cron'){
+        const tasks=[];await worker.scheduled({scheduledTime:Date.now()},env,{waitUntil(p){tasks.push(p);}});
+        await Promise.all(tasks);return Response.json({done:true});
+      }return worker.fetch(request,env,ctx);}};`);
+  try {
+    await runtime.dispatchFetch('https://test/health');const db=await runtime.getD1Database('DB');
+    await db.prepare("INSERT INTO cf_jobs(id,kind,payload,created_at) VALUES ('ai-check','setup',?,?)")
+      .bind(JSON.stringify({action:'check_ai'}),Date.now()).run();
+    await runtime.dispatchFetch('https://test/__test/cron');await runtime.dispatchFetch('https://test/__test/cron');
+    assert.equal(calls,1);assert.equal((await db.prepare("SELECT status FROM cf_jobs WHERE id='ai-check'").first()).status,'done');
+    const usage=await db.prepare('SELECT runs,calls FROM cf_usage').first();assert.deepEqual(usage,{runs:0,calls:1});
+    const result=JSON.parse((await db.prepare("SELECT value FROM cf_meta WHERE key='ai_diagnostic'").first()).value);
+    assert.equal(result.available,true);assert.ok(!JSON.stringify(result).includes('test-only-key'));
+  }finally{await runtime.dispose();}
+});
+
 for(const variant of ['openai','gemini','gemini-feeds']) {
 const provider=variant==='openai'?'openai':'gemini';
 test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval and single publication with mocked APIs',async()=>{
