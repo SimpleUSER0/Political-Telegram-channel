@@ -7,6 +7,14 @@ export class Store {
     await this.stmt('INSERT INTO cf_audit(action,draft_id,version,actor,at,detail) VALUES (?,?,?,?,?,?)',
       action, draft?.id || null, draft?.version || null, String(actor), now(), detail).run();
   }
+  async requireCallCapacity(limit,needed) {
+    if (!Number.isInteger(needed) || needed<1 || needed>limit)
+      throw new Halt('Daily AI budget cannot cover a complete research run');
+    const day=new Date().toISOString().slice(0,10);
+    const usage=await this.stmt('SELECT calls FROM cf_usage WHERE day=?',day).first();
+    if (Number(usage?.calls || 0)+needed>limit)
+      throw new Halt('Insufficient remaining daily AI calls for a complete research run');
+  }
   async reserve(field, limit) {
     if (!['runs','calls'].includes(field)) throw new Halt('Unknown usage counter');
     const day = new Date().toISOString().slice(0,10);
