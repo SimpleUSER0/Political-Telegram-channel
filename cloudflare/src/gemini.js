@@ -31,7 +31,7 @@ export async function geminiCall(c,store,day,instruction,data,schema,search) {
     '. Do not provide a memory-only answer. Include direct publisher URLs for the search sources.':'')}]},
     contents:[{role:'user',parts:[{text:JSON.stringify(data)}]}],
     generationConfig:{maxOutputTokens:c.maxTokens}};
-  if (schema) body.generationConfig.responseFormat={text:{mimeType:'application/json',schema}};
+  if (schema) body.generationConfig.responseFormat={text:{mimeType:'APPLICATION_JSON',schema}};
   // Separate search and JSON calls work with Gemini 2.5; no search+schema combination.
   if (search) body.tools=[{google_search:{}}];
   const response=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+c.model+':generateContent',{
@@ -40,7 +40,17 @@ export async function geminiCall(c,store,day,instruction,data,schema,search) {
   });
   const raw=await readText(response,1000000);
   if (response.status===429) throw new Halt('Gemini free-tier quota reached (429); no paid-provider fallback');
-  if (!response.ok) throw new Halt('Gemini request failed (HTTP '+response.status+')');
+  if (!response.ok) {
+    let detail='';
+    try {
+      const error=JSON.parse(raw).error;
+      const status=/^[A-Z_]{1,50}$/.test(error?.status)?error.status:'';
+      const message=String(error?.message || '').replaceAll(c.env.GEMINI_API_KEY,'[redacted]')
+        .replace(/AIza[A-Za-z0-9_-]{10,}/g,'[redacted]').replace(/https?:\/\/\S+/g,'[url]').slice(0,160);
+      detail=[status,message].filter(Boolean).join(': ');
+    }catch{}
+    throw new Halt('Gemini request failed (HTTP '+response.status+')'+(detail?': '+detail:''));
+  }
   let packet;
   try {packet=JSON.parse(raw);} catch {throw new Halt('Invalid Gemini response');}
   const candidate=packet.candidates?.[0], meta=candidate?.groundingMetadata;

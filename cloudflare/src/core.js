@@ -28,11 +28,16 @@ export function config(env) {
   const domains = (env.SOURCE_DOMAINS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
   if (domains.some(d => !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/.test(d)))
     throw new Halt('Invalid SOURCE_DOMAINS');
+  const discovery=env.DISCOVERY_MODE || 'web_search';
+  if(!['web_search','feeds'].includes(discovery))throw new Halt('Invalid DISCOVERY_MODE');
+  const feeds=[...new Set((env.SOURCE_FEEDS || 'bbc-world,guardian-world,civil-ge').split(',').map(s=>s.trim()).filter(Boolean))];
+  if(discovery==='feeds' && (feeds.length<2 || feeds.some(f=>!['bbc-world','guardian-world','civil-ge'].includes(f))))
+    throw new Halt('SOURCE_FEEDS requires at least two known publisher feeds');
   const channel = String(env.CHANNEL_ID || '');
   if (['@cifruli_era', '@digitalera101'].includes(channel.toLowerCase()))
     throw new Halt('An existing technology channel cannot be used');
   return {
-    env, domains, origins, hours, owner: String(env.OWNER_USER_ID || ''),
+    env, domains, origins, hours, discovery, feeds, owner: String(env.OWNER_USER_ID || ''),
     ownerChat: String(env.OWNER_CHAT_ID || env.OWNER_USER_ID || ''), channel,
     username: String(env.EXPECTED_BOT_USERNAME || '').replace(/^@/, '').toLowerCase(),
     research: enabled(env.RESEARCH_ENABLED), publish: enabled(env.PUBLISH_ENABLED),

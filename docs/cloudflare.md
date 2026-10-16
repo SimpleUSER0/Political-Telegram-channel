@@ -43,20 +43,28 @@ The Worker supports Gemini as well as OpenAI. For a Google AI Studio key use:
 |---|---|---|
 | Secret | `GEMINI_API_KEY` | Your Google AI Studio key |
 | Text | `AI_PROVIDER` | `gemini` |
-| Text | `GEMINI_MODEL` | `gemini-2.5-flash` |
+| Text | `GEMINI_MODEL` | `gemini-3.5-flash-lite` |
+| Text | `DISCOVERY_MODE` | `feeds` |
+| Text | `SOURCE_FEEDS` | `bbc-world,guardian-world,civil-ge` |
+| Text | `SOURCE_DOMAINS` | `bbc.co.uk,bbc.com,theguardian.com,civil.ge` |
 
 Do not put a Google key in `OPENAI_API_KEY`. In Gemini mode neither an OpenAI key nor
 `OPENAI_MODEL` is required. If `AI_PROVIDER` is absent, a `GEMINI_API_KEY` selects Gemini;
 otherwise the previous OpenAI default is preserved. Explicit `AI_PROVIDER=gemini` avoids ambiguity.
 No error or quota exhaustion triggers fallback to OpenAI or another model.
 
-Google's pricing page checked on 2026-10-16 lists Gemini 2.5 Flash text input/output and
-Google Search grounding within free-tier quotas. Account/model/region limits can change;
-a free key does not guarantee unlimited or uninterrupted use. Paid billing can incur charges.
+Google's model documentation checked on 2026-10-16 restricts Gemini 2.5 to previously active
+projects; a new project's live 2.5 request returned HTTP 404. The pricing page lists free
+text input/output for Gemini 3.5 Flash-Lite, but Google Search grounding is unavailable on
+its Free tier. The explicit `feeds` mode therefore discovers actual recent URLs from fixed,
+publisher-operated RSS feeds and makes ordinary structured text requests. It never invokes
+paid Google Search or falls back to model-written URLs. Account/model/region limits can change;
+a free key does not guarantee uninterrupted use. Paid billing can incur charges.
 Gemini defaults to **1 research run and 12 API calls daily**, unless you explicitly configure
-different caps. A run uses about 5–6 model calls; an edit adds a fact check. HTTP 429 stops the job.
+different caps. A feed run uses about 4–5 model calls; web search adds one. An edit adds a fact
+check. HTTP 429 stops the job.
 
-Discovery requires actual Google Search grounding sources, not URLs written from model memory.
+`DISCOVERY_MODE=web_search` retains actual provider search grounding for eligible accounts.
 Only exact Google grounding redirect URLs may resolve to allowed publisher domains. The API key
 stays in the Google request header and is never forwarded to publishers. JSON is also checked
 locally. The existing source retrieval, quote/date/origin checks and mandatory approval remain.
@@ -65,6 +73,7 @@ Tests mock Google; live access still requires a closed pilot.
 
 References:
 - https://ai.google.dev/gemini-api/docs/pricing
+- https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash
 - https://ai.google.dev/gemini-api/docs/generate-content/structured-output
 - https://ai.google.dev/gemini-api/docs/generate-content/google-search
 
@@ -78,7 +87,9 @@ not build variables. `keep_vars: true` preserves dashboard values across future 
 | `ADMIN_API_TOKEN` | Secret; 32+ random characters |
 | `GEMINI_API_KEY` | Secret in Gemini mode; Google AI Studio key |
 | `AI_PROVIDER` | `gemini` or `openai` |
-| `GEMINI_MODEL` | Gemini mode: `gemini-2.5-flash` (also the default) |
+| `GEMINI_MODEL` | New free project: `gemini-3.5-flash-lite`; legacy default remains `gemini-2.5-flash` |
+| `DISCOVERY_MODE` | `feeds` for free text models; `web_search` (default) for eligible grounded search |
+| `SOURCE_FEEDS` | Feed mode: at least two of `bbc-world,guardian-world,civil-ge` |
 | `OPENAI_API_KEY` | Secret in OpenAI mode only |
 | `EXPECTED_BOT_USERNAME` | New bot username, without `@` |
 | `OWNER_USER_ID` | Your numeric Telegram user ID |
@@ -128,6 +139,10 @@ webhook, then verifies `getWebhookInfo`. It records a non-secret summary in
 `cf_meta.webhook_registration` and an audit trail. Failed or interrupted jobs are not retried.
 No Telegram command or public request can enqueue setup jobs. This path needs D1 write access
 but does not require reading bot tokens, webhook secrets or the admin bearer token.
+The same infrastructure-only setup queue accepts `{"action":"check_ai"}` for one bounded,
+schema-validated availability request. It consumes the daily call budget, never a research run,
+and stores only provider/model/availability in `cf_meta.ai_diagnostic`. API failure messages
+redact the configured key and URLs before they enter the job error field.
 
 5. `/start` should now respond; `/status` shows missing configuration and queue counters.
 6. Enable `RESEARCH_ENABLED=true` for a deliberately limited research test. Send `/news ...`.
