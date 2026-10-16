@@ -6,6 +6,15 @@ export const FEEDS=Object.freeze({
   'guardian-world':'https://www.theguardian.com/world/rss',
   'civil-ge':'https://civil.ge/feed',
 });
+const PUBLISHERS={'bbc-world':['bbc.co.uk','bbc.com'],'guardian-world':['theguardian.com'],'civil-ge':['civil.ge']};
+export function feedPublication(entries,discoveredUrl,finalUrl) {
+  const entry=entries?.find(e=>e.url===discoveredUrl);
+  if(!entry || entry.feed_url!==FEEDS[entry.feed])return null;
+  const domains=PUBLISHERS[entry.feed] || [];
+  const belongs=url=>domains.some(d=>new URL(url).hostname===d || new URL(url).hostname.endsWith('.'+d));
+  if(!belongs(entry.url) || !belongs(finalUrl))return null;
+  return {published_at:entry.published_at,via:'publisher-rss',evidence_url:entry.feed_url,article_url:entry.url};
+}
 function text(value) {
   return value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1')
     .replace(/&#(x[0-9a-f]+|\d+);/gi,(_,n)=>{
@@ -54,7 +63,7 @@ export async function discoverFeeds(c) {
         if(!/<rss[\s>]/i.test(xml))throw new Halt('Invalid publisher feed');
         const entries=parseFeed(xml,c);
         if(entries.length)used.push(name);
-        for(const entry of entries)articles.set(entry.url,entry);
+        for(const entry of entries)articles.set(entry.url,{...entry,feed:name,feed_url:initial});
         break;
       }
     }catch{ /* An unavailable feed cannot be replaced with model memory. */ }
@@ -62,7 +71,7 @@ export async function discoverFeeds(c) {
   const entries=[...articles.values()].sort((a,b)=>b.published_at.localeCompare(a.published_at));
   const origins=new Set(entries.map(e=>new URL(e.url).hostname.replace(/^www\./,'')));
   if(used.length<2 || origins.size<2)throw new Halt('Fewer than two accessible recent publisher feeds');
-  return {provider:'publisher-rss',grounding:{kind:'publisher-rss',feeds:used},output:[
+  return {provider:'publisher-rss',articles:entries,grounding:{kind:'publisher-rss',feeds:used},output:[
     {type:'feed_discovery',action:{sources:entries.map(e=>({url:e.url}))}},
     {type:'message',content:[{type:'output_text',text:JSON.stringify({articles:entries})}]},
   ]};

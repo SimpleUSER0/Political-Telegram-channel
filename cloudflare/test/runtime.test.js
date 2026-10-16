@@ -140,7 +140,8 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
         let data;
         if(properties.candidates)data={candidates:[{event_key:'meeting-'+time,topic:'Meeting',event_at:time,
           source_urls:['https://example.com/news','https://example.org/news']}]};
-        else if(properties.publishable)data=p.verification;
+        else if(properties.publishable)data=variant==='gemini-feeds'
+          ?{...p.verification,sources:p.verification.sources.map(s=>({...s,published_at:null}))}:p.verification;
         else if(properties.title)data=p.article;
         else if(properties.passed)data=p.fact_check;
         else throw new Error('Unexpected mock model call');
@@ -157,7 +158,7 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
       return Response.json({...result,status:'completed',usage:{input_tokens:10,output_tokens:20}});
     }
     if(['example.com','example.org'].includes(url.hostname))return new Response(
-      '<html><body><nav>UNTRUSTED NAVIGATION</nav><script>INJECTED SCRIPT</script><article>'+time+
+      '<html><head><meta property="article:published_time" content="'+time+'"></head><body><nav>UNTRUSTED NAVIGATION</nav><script>INJECTED SCRIPT</script><article>'+time+
       ' '+p.sources[0].text+' '+('The report provides context for the diplomatic meeting. '.repeat(8))+
       '</article></body></html>',{headers:{'Content-Type':'text/html'}});
     if(url.hostname==='api.telegram.org') {
@@ -191,6 +192,7 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
     assert.ok(evidence.includes(p.sources[0].text));
     assert.ok(!evidence.includes('INJECTED SCRIPT'));
     assert.ok(!evidence.includes('UNTRUSTED NAVIGATION'));
+    assert.equal(JSON.parse(draft.payload).sources[0].publication.published_at,time);
     assert.equal(calls,variant==='gemini-feeds'?4:5);assert.equal(sends,1); // Owner draft notification only.
     if(variant==='gemini-feeds')assert.equal(JSON.parse(draft.payload).grounding.kind,'publisher-rss');
     assert.equal((await runtime.dispatchFetch('https://test/__test/publish?id='+draft.id)).status,200);
