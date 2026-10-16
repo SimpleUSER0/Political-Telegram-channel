@@ -6,7 +6,7 @@
   "engines": {"node": ">=22.13.0"},
   "scripts": {
     "test:cloudflare": "node --test cloudflare/test/*.test.js",
-    "check:cloudflare": "node --check cloudflare/src/worker.js && node --check cloudflare/src/research.js",
+    "check:cloudflare": "node --check cloudflare/src/worker.js && node --check cloudflare/src/research.js && node --check cloudflare/src/gemini.js",
     "deploy": "wrangler deploy",
     "dev": "wrangler dev"
   },
