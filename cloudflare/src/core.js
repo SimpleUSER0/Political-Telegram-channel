@@ -172,6 +172,8 @@ export function validatePacket(packet, sources, c, time = now()) {
     if (!assessment.published_at || !/(Z|[+-]\d\d:\d\d)$/.test(assessment.published_at) ||
         !Number.isFinite(date) || date < time - c.age || date > time + 600000)
       throw new Halt('Unknown or stale source publication date');
+    if(source.publication && Date.parse(source.publication.published_at)!==date)
+      throw new Halt('Source publication date conflicts with publisher metadata');
     const host = new URL(source.url).hostname;
     const mapped = Object.entries(c.origins).find(([d]) => host === d || host.endsWith('.' + d));
     if (mapped && normalized(mapped[1]) !== normalized(assessment.origin_group))

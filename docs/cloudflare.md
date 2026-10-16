@@ -69,6 +69,11 @@ Only exact Google grounding redirect URLs may resolve to allowed publisher domai
 stays in the Google request header and is never forwarded to publishers. JSON is also checked
 locally. The existing source retrieval, quote/date/origin checks and mandatory approval remain.
 Grounding metadata is retained in the draft's authenticated API response for inspection.
+Publication time is preserved from article publication meta tags or NewsArticle JSON-LD before
+HTML cleanup. When absent, a retrieved RSS timestamp may be used only for that feed's own
+publisher article, including BBC's co.uk/com redirect. Publisher evidence and its URL are stored
+with each source. Known publication times override model date extraction, while stale/future
+timestamps and conflicting packet dates still fail validation; dateModified is never a substitute.
 Tests mock Google; live access still requires a closed pilot.
 
 References:
