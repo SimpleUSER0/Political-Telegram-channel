@@ -6,7 +6,7 @@ import {payload} from './helpers.js';
 
 function modules(extraMain) {
   const result={};
-  for(const name of ['worker','core','store','schema','research','gemini'])result[name+'.js']={
+  for(const name of ['worker','core','store','schema','research','gemini','feeds'])result[name+'.js']={
     type:'esm',contents:readFileSync(new URL('../src/'+name+'.js',import.meta.url),'utf8'),
   };
   if(extraMain)result['harness.js']={type:'esm',contents:extraMain};
@@ -84,8 +84,9 @@ test('managed webhook setup: '+scenario,async()=>{
   } finally {await runtime.dispose();}
 });
 
-for(const provider of ['openai','gemini'])
-test('workerd runs '+provider+' research, real HTMLRewriter extraction, approval and single publication with mocked APIs',async()=>{
+for(const variant of ['openai','gemini','gemini-feeds']) {
+const provider=variant==='openai'?'openai':'gemini';
+test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval and single publication with mocked APIs',async()=>{
   let calls=0,sends=0;
   const p=payload(),time=new Date().toISOString();
   const runtime=instance({
@@ -94,9 +95,15 @@ test('workerd runs '+provider+' research, real HTMLRewriter extraction, approval
     WEBHOOK_SECRET:'w'.repeat(40),ADMIN_API_TOKEN:'a'.repeat(40),OPENAI_API_KEY:'test-only',
     OPENAI_MODEL:'test-only',SOURCE_DOMAINS:'example.com,example.org',
     AI_PROVIDER:provider,GEMINI_API_KEY:'gemini-test-only',GEMINI_MODEL:'gemini-2.5-flash',
+    DISCOVERY_MODE:variant==='gemini-feeds'?'feeds':'web_search',SOURCE_FEEDS:'bbc-world,guardian-world',
     RESEARCH_ENABLED:'true',PUBLISH_ENABLED:'true',
   },async request=>{
     const url=new URL(request.url);
+    if(['feeds.bbci.co.uk','www.theguardian.com'].includes(url.hostname))return new Response(
+      '<rss><channel><item><title>A diplomatic meeting</title><pubDate>'+new Date().toUTCString()+
+      '</pubDate><link>https://'+(url.hostname==='feeds.bbci.co.uk'?'example.com':'example.org')+
+      '/news</link><description>A recent independently reported meeting.</description></item></channel></rss>',
+      {headers:{'Content-Type':'application/rss+xml'}});
     if(['api.openai.com','generativelanguage.googleapis.com'].includes(url.hostname)) {
       const body=await request.json();
       let result;
@@ -159,10 +166,12 @@ test('workerd runs '+provider+' research, real HTMLRewriter extraction, approval
     assert.ok(evidence.includes(p.sources[0].text));
     assert.ok(!evidence.includes('INJECTED SCRIPT'));
     assert.ok(!evidence.includes('UNTRUSTED NAVIGATION'));
-    assert.equal(calls,5);assert.equal(sends,1); // Owner draft notification only.
+    assert.equal(calls,variant==='gemini-feeds'?4:5);assert.equal(sends,1); // Owner draft notification only.
+    if(variant==='gemini-feeds')assert.equal(JSON.parse(draft.payload).grounding.kind,'publisher-rss');
     assert.equal((await runtime.dispatchFetch('https://test/__test/publish?id='+draft.id)).status,200);
     assert.equal((await runtime.dispatchFetch('https://test/__test/publish?id='+draft.id)).status,409);
     assert.equal(sends,2); // One owner notification and exactly one channel post.
     assert.equal((await db.prepare('SELECT state FROM cf_drafts').first()).state,'published');
   } finally {await runtime.dispose();}
 });
+}
