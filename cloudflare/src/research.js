@@ -151,18 +151,22 @@ export async function generate(c,store,query,format) {
   if (!c.research || missing(c,true).length) throw new Halt('Research is disabled or not configured');
   if (!['FLASH','QUICK','STANDARD','DEEP'].includes(format) || typeof query!=='string' ||
       query.trim().length<3 || query.length>1000) throw new Halt('Invalid research request');
+  let stage='budget';
+  try {
   const history = await store.history();
   // Reserve the run only when the remaining daily call budget can cover an
   // entire four/five-step workflow; avoid a predictable partial paid run.
   const requiredCalls=(c.discovery==='feeds'?4:5)+(history.length?1:0);
   await store.requireCallCapacity(c.dailyCalls,requiredCalls);
   await store.reserve('runs',c.dailyRuns);
+  stage='discovery';
   const search = c.discovery==='feeds'?await discoverFeeds(c):await llm(c,store,`Find one important new political event matching the query.
 Collect 2-6 specific, recent news article URLs from independent sources. Give exact event and
 publication dates. Avoid all history events, including paraphrases. No suitable event is acceptable.`,
     {now:new Date().toISOString(),query,history},null,true);
   const allowed = retrievedUrls(search,c.domains);
   if (allowed.size<2) throw new Halt('Search returned insufficient admissible source URLs');
+  stage='candidate';
   const discovery = await llm(c,store,`Extract at most one candidate from the research.
 Use ONLY allowed_urls. event_key must identify the precise event and UTC date, in normalized English.
 Return candidates=[] if evidence is inadequate. Never invent a URL or date.`,
@@ -182,6 +186,7 @@ Return candidates=[] if evidence is inadequate. Never invent a URL or date.`,
   }
   const urls = [...new Set(selected.source_urls.map(u=>sourceUrl(u,c.domains)))];
   if (urls.length<2 || urls.length>6 || urls.some(u=>!allowed.has(u))) throw new Halt('Undiscovered source URL');
+  stage='source-fetch';
   const collected=[];
   for (const url of urls) {
     try {
@@ -197,6 +202,7 @@ Return candidates=[] if evidence is inadequate. Never invent a URL or date.`,
     }
   }
   const sources=requireDatedSources(collected,c);
+  stage='verification';
   const packet=await llm(c,store,`Assess ALL sources by numeric source_id. Identify publication
 dates from source content; use publication.published_at when publisher metadata supplies it.
 Do not confuse dateModified or the event date with publication time. Do not guess.
@@ -212,16 +218,28 @@ attribute and explicitly mark uncertainty. Withhold for unknown dates or weak ce
     if(publication)assessment.published_at=publication.published_at;
   }
   validatePacket(packet,sources,c);
+  stage='draft';
   const article=await llm(c,store,`Write a neutral Georgian Telegram draft using ONLY the evidence.
 Every assertion must map to claim_ids (zero based). Preserve all attributions and uncertainty.
 Include every supporting source_id. No URLs or HTML in title/body. Title+body <=3500 UTF-16 units.
 Formats: FLASH very short; QUICK short; STANDARD contextual; DEEP as detailed as the limit permits.`,
     {verification:packet,format},articleSchema);
+  stage='fact-check';
   const check=await validateDraft(c,store,article,packet,sources);
   const payload={article,verification:packet,sources,selection:selected,format,
     fact_check:check,checked_at:new Date().toISOString(),media:null,provider:c.provider,
     grounding:search.grounding || null};
+  stage='draft-storage';
   return store.createDraft(selected,payload,c.ttl);
+  } catch(error) {
+    if (error instanceof Halt) throw error;
+    // Log only a fixed stage and an error class. Raw upstream messages might
+    // include URLs or credentials; they must not enter job records or chat.
+    const name=['TypeError','ReferenceError','RangeError','SyntaxError'].includes(error?.name)
+      ? error.name : 'Error';
+    console.warn('Research runtime error at',stage,'class',name);
+    throw new Halt('Research execution failed at '+stage+' ('+name+'); no automatic retry');
+  }
 }
 
 export async function editDraft(c,store,draft,title,body) {
