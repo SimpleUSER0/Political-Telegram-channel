@@ -39,6 +39,19 @@ export async function verifyChannel(c) {
     throw new Halt('A separate political channel is required');
   return chat;
 }
+export async function registerWebhook(c) {
+  if (missing(c).length) throw new Halt('Incomplete bot configuration');
+  const publicUrl=new URL(c.env.PUBLIC_BASE_URL || '');
+  if (publicUrl.protocol!=='https:' || publicUrl.username || publicUrl.password || publicUrl.search || publicUrl.hash ||
+      !['','/'].includes(publicUrl.pathname)) throw new Halt('PUBLIC_BASE_URL must be a canonical HTTPS origin');
+  const bot=await verifyIdentity(c), channel=await verifyChannel(c);
+  const url=publicUrl.origin+'/telegram/webhook';
+  await telegram(c,'setWebhook',{url,secret_token:c.env.WEBHOOK_SECRET,
+    allowed_updates:['message','callback_query'],drop_pending_updates:false});
+  const info=await telegram(c,'getWebhookInfo',{});
+  if (info?.url!==url) throw new Halt('Telegram webhook URL verification failed');
+  return {registered:true,verified:true,bot:bot.username,channel:channel.username || String(channel.id),at:now()};
+}
 async function tell(c,text,reply_markup) {
   return telegram(c,'sendMessage',{chat_id:c.ownerChat,text:text.slice(0,4000),
     link_preview_options:{is_disabled:true},...(reply_markup?{reply_markup}:{})});
@@ -172,6 +185,21 @@ export async function drain(c,store,kind,limit=1) {
     try {
       const payload=JSON.parse(job.payload);
       if (kind==='control') await handleControl(c,store,payload,job);
+      else if (kind==='setup') {
+        // Only authenticated infrastructure administration can insert this job kind.
+        // Public webhook payloads are normalized into control jobs and cannot request setup.
+        if (payload.action!=='register_webhook') throw new Halt('Unknown setup action');
+        await store.audit('webhook_setup_requested',null,'cloudflare-admin',job.id);
+        let result;
+        try { result=await registerWebhook(c); }
+        catch (error) {
+          if (error instanceof TelegramFailure) throw new Halt(error.message);
+          throw error;
+        }
+        await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('webhook_registration',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+          JSON.stringify(result)).run();
+        await store.audit('webhook_setup_verified',null,'cloudflare-admin',job.id);
+      }
       else if (kind==='research') {
         const created=await generate(c,store,payload.query,payload.format);
         // A notification error must not delete a completed draft or repeat paid research.
@@ -226,13 +254,7 @@ async function admin(request,url,c,store) {
   }
   if (request.method==='POST' && url.pathname==='/admin/register-webhook') {
     if (missing(c).length) return json({error:'Incomplete bot configuration',missing:missing(c)},503);
-    await verifyIdentity(c); await verifyChannel(c);
-    const publicUrl=new URL(c.env.PUBLIC_BASE_URL || '');
-    if (publicUrl.protocol!=='https:' || publicUrl.username || publicUrl.password || publicUrl.search || publicUrl.hash ||
-        !['','/'].includes(publicUrl.pathname)) throw new Halt('PUBLIC_BASE_URL must be a canonical HTTPS origin');
-    await telegram(c,'setWebhook',{url:publicUrl.origin+'/telegram/webhook',secret_token:c.env.WEBHOOK_SECRET,
-      allowed_updates:['message','callback_query'],drop_pending_updates:false});
-    return json({registered:true});
+    return json(await registerWebhook(c));
   }
   if (request.method==='POST' && url.pathname==='/admin/generate') {
     if (!c.research || missing(c,true).length) return json({error:'Research disabled or not configured'},503);
@@ -320,6 +342,7 @@ export default {
       const store=new Store(env.DB);
       await store.recover();
       await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('cron_heartbeat',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",String(now())).run();
+      await drain(c,store,'setup',1);
       await drain(c,store,'control',3);
       await schedule(c,store,event.scheduledTime);
       await drain(c,store,'edit',1);
