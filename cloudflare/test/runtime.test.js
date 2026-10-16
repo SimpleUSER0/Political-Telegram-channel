@@ -31,6 +31,58 @@ test('workerd initializes real D1 schema, handles health and rejects unconfigure
   } finally {await runtime.dispose();}
 });
 
+for (const scenario of ['success','wrong bot','wrong channel','wrong webhook'])
+test('managed webhook setup: '+scenario,async()=>{
+  let registrations=0,posts=0;
+  const token='555:test-only-token', secret='w'.repeat(40), base='https://political.example.com';
+  const runtime=instance({OWNER_USER_ID:'123',TELEGRAM_BOT_TOKEN:token,
+    EXPECTED_BOT_USERNAME:'political_test_bot',CHANNEL_ID:'-100555',
+    WEBHOOK_SECRET:secret,ADMIN_API_TOKEN:'a'.repeat(40),PUBLIC_BASE_URL:base,
+  },async request=>{
+    const method=new URL(request.url).pathname.split('/').at(-1);
+    if(method==='getMe')return Response.json({ok:true,result:{is_bot:true,
+      username:scenario==='wrong bot'?'another_bot':'political_test_bot'}});
+    if(method==='getChat')return Response.json({ok:true,result:{type:scenario==='wrong channel'?'private':'channel',
+      username:'political_test_channel'}});
+    if(method==='setWebhook') {
+      const body=await request.json();
+      assert.equal(body.secret_token,secret);assert.equal(body.drop_pending_updates,false);
+      assert.equal(body.url,base+'/telegram/webhook');registrations++;
+      return Response.json({ok:true,result:true});
+    }
+    if(method==='getWebhookInfo')return Response.json({ok:true,result:{
+      url:scenario==='wrong webhook'?'https://wrong.example.com/':base+'/telegram/webhook'}});
+    if(method==='sendMessage'){posts++;return Response.json({ok:true,result:{message_id:1}});}
+    throw new Error('Unexpected outbound method');
+  },`
+    import worker from './worker.js';
+    export default {async fetch(request,env,ctx) {
+      if(new URL(request.url).pathname==='/__test/cron') {
+        const tasks=[];
+        await worker.scheduled({scheduledTime:Date.now()},env,{waitUntil(p){tasks.push(p);}});
+        await Promise.all(tasks);return Response.json({done:true});
+      }
+      return worker.fetch(request,env,ctx);
+    }};`);
+  try {
+    await runtime.dispatchFetch('https://test/health');
+    const db=await runtime.getD1Database('DB');
+    await db.prepare("INSERT INTO cf_jobs(id,kind,payload,created_at) VALUES ('setup-test','setup',?,?)")
+      .bind(JSON.stringify({action:'register_webhook'}),Date.now()).run();
+    await runtime.dispatchFetch('https://test/__test/cron');
+    await runtime.dispatchFetch('https://test/__test/cron');
+    const job=await db.prepare("SELECT * FROM cf_jobs WHERE id='setup-test'").first();
+    const result=await db.prepare("SELECT value FROM cf_meta WHERE key='webhook_registration'").first();
+    assert.equal(job.status,scenario==='success'?'done':'failed');
+    assert.equal(registrations,['success','wrong webhook'].includes(scenario)?1:0);
+    if(scenario==='success') {
+      assert.equal(JSON.parse(result.value).verified,true);
+      assert.equal(posts,0);
+      assert.ok(!result.value.includes(token));assert.ok(!result.value.includes(secret));
+    } else {assert.equal(result,null);assert.equal(posts,1);} // Private owner failure notice only.
+  } finally {await runtime.dispose();}
+});
+
 for(const provider of ['openai','gemini'])
 test('workerd runs '+provider+' research, real HTMLRewriter extraction, approval and single publication with mocked APIs',async()=>{
   let calls=0,sends=0;

@@ -121,6 +121,14 @@ This endpoint checks `getMe` against `EXPECTED_BOT_USERNAME` and checks the targ
 channel before registering the webhook. It does not drop pending Telegram updates. Webhook setup
 is never performed implicitly on deployment/startup. There is no API endpoint for publishing posts.
 
+An authenticated Cloudflare infrastructure administrator can alternatively insert one explicit
+`cf_jobs` row with `kind='setup'`, a unique ID and payload `{"action":"register_webhook"}`.
+The next cron claims it once, verifies bot identity and the political channel, registers the
+webhook, then verifies `getWebhookInfo`. It records a non-secret summary in
+`cf_meta.webhook_registration` and an audit trail. Failed or interrupted jobs are not retried.
+No Telegram command or public request can enqueue setup jobs. This path needs D1 write access
+but does not require reading bot tokens, webhook secrets or the admin bearer token.
+
 5. `/start` should now respond; `/status` shows missing configuration and queue counters.
 6. Enable `RESEARCH_ENABLED=true` for a deliberately limited research test. Send `/news ...`.
 7. The minute cron drains the durable queue. A draft appears with **Publish / Edit / Cancel** and
