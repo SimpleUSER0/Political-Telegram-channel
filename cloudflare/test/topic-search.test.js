@@ -12,7 +12,7 @@ test('News index search URL has fixed HTTPS origin and properly escaped arbitrar
 });
 test('Public index metadata is not publisher-reported publication proof',()=>{
  const data={articles:[
-  {url:'https://www.bbc.co.uk/news/articles/1',title:'Japan election policy announced',seendate:'20261017200000'},
+  {url:'https://www.bbc.co.uk/news/articles/1',title:'Japan election policy announced',seendate:'20261017T200000Z'},
   {url:'https://www.theguardian.com/world/2026/oct/17/unrelated',title:'Russia sanctions expanded',seendate:'20261017203000'},
   {url:'https://malicious.example.com/article',title:'Japan election policy',seendate:'20261017213000'},
  ]};
@@ -29,4 +29,10 @@ test('Topic candidates cannot fall back to unrelated politics to satisfy a post 
  ];
  assert.deepEqual(rankRequestedArticles(docs,'Ecuador election'),[docs[1]]);
  assert.deepEqual(rankRequestedArticles(docs,'Japan government'),[]);
+});
+
+test('Index-selected topical articles without literal country name remain candidates for actual-source AI verification',()=>{
+ const docs=[{title:'Takaichi approves new trade measure',feed:'gdelt-index',
+  published_at:'2026-10-17T19:00:00Z'}];
+ assert.deepEqual(rankRequestedArticles(docs,'Japan trade'),docs);
 });
