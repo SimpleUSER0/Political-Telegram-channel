@@ -37,6 +37,7 @@ export function editorialRelevant(article,query='') {
   if(!text)return false;
   const topic=editorialTopic(query);
   if(topic && !topic.article.test(topic.headlineRequired?String(article?.title||''):text))return false;
+  if(topic?.id==='japan' && /\b(?:mentions?|mentioned|briefly referenced|a passing reference to|cites? japan in passing)\b|მხოლოდ მოიხსენია|მხოლოდ ახსენა/iu.test(String(article?.title||'')))return false;
   if(!POLITICS.test(text))return false;
   // Bare geography + a routine criminal or entertainment article is not politics.
   if(ROUTINE.test(text) && !/\b(?:government|politic(?:s|al)|parliament|president|diplomat(?:ic|s)?|minister|sanctions?|security council|military|election|protest|state policy|foreign policy)\b|მთავრობ|პოლიტიკ|პარლამენტ|პრეზიდენტ|დიპლომატ|მინისტრ|სანქცი|სამხედრო|არჩევნ|პროტესტ|საგარეო/iu.test(text))return false;
