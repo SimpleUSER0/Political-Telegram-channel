@@ -42,3 +42,19 @@ export function editorialRelevant(article,query='') {
 export function editorialCandidates(entries,query) {
   return entries.filter(entry=>editorialRelevant(entry,query));
 }
+
+/* Small, factual-neutral terminology fixes for recurrent Georgian machine-translation
+   calques. This does NOT rewrite facts, quotations, dates or names from sources. */
+export function polishGeorgianArticle(article) {
+  const corrections=[
+    [/ბრიტანიის/gu,'ბრიტანეთის'],
+    [/ელექტრომანქან/gu,'ელექტრომობილ'],
+    [/ეუ-ს/gu,'ევროკავშირის'],
+    [/ეუ-ში/gu,'ევროკავშირში'],
+    [/ჩინული საელჩო/gu,'ჩინეთის საელჩო'],
+    [/მოწინააღმდეგობას უწყობს/gu,'ეწინააღმდეგება'],
+    [/შევიდება/gu,'შევა'],
+  ];
+  const polish=value=>corrections.reduce((s,[pattern,replacement])=>s.replace(pattern,replacement),value);
+  return {...article,title:polish(article.title),body:polish(article.body)};
+}
