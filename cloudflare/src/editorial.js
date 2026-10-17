@@ -3,6 +3,9 @@
 const POLITICS = /\b(?:president|prime minister|government|minister|parliament|congress|senate|elections?|electoral|vote|voting|ballot|politic(?:s|al)?|diplomat(?:ic|s)?|diplomacy|summit|summits|sanctions?|tariffs?|trade war|foreign polic(?:y|ies)|security council|nato|eu leaders|european union|ceasefire|peace talks|treaty|border dispute|military|troops|warfare|war|invasion|protests?|legislation|white house|kremlin|cabinet|regime|referendum|party leader|defence|defense|foreign minister|state visit|ambassador|policy change|political prisoners|geopolitic(?:s|al)?|bilateral|delegation|negotiation|peace deal|resignation|opposition|navy|naval|warship|missiles?|nuclear|airstrike|territorial waters|territorial dispute|border tensions|cross-strait|defence spending|arms sale|Xi Jinping)\b|არჩევნ|პოლიტიკ|მთავრობ|პრეზიდენტ|პრემი[ეე]რ|პარლამენტ|დეპუტატ|მინისტრ|დიპლომატ|სამიტ|სანქცი|ტარიფ|სავაჭრო ომ|უსაფრთხოებ|სამხედრო|ომი|ომის |საომარ|შეტაკებ|კონფლიქტ|მოლაპარაკ|შეთანხმებ|პროტესტ|აქციაზე|კანონ|რეფერენდუმ|ოპოზიცი|პარტი|საგარეო|საკანონმდებლო|ევროკავშირ|ნატო|ელჩ|სხდომ|თავდაცვ|თავდასხმ|ოკუპაცი/iu;
 const ROUTINE = /\b(?:nursery|poison(?:ed|ing)?|celebrity|actor|actress|football|soccer|basketball|film|movie|music|album|fashion|restaurant|recipe|lottery|horoscope|wedding|divorce|influencer|arrested for theft|murder trial|stabbing|school exam|sports star|medical treatment|hospital discharge)\b|საბავშვო ბაღ|მოწამლ|მკვლელობ|ქურდობ|ავარი|კრიმინალ|მსახიობ|მომღერალ|ფეხბურთ|კალათბურთ|კინოფილმ|ქორწილ|ჯანმრთელობ|საავადმყოფო|კულინარი/iu;
 const TOPICS = [
+  {id:'japan',question:/იაპონ|ტოკიო|japan|japanese|tokyo|kishida|ishiba|takaichi/i,
+    article:/\b(?:japan|japanese|tokyo|japan's|japan–|ishiba|takaichi|kishida)\b|იაპონ|ტოკიო|ტაკაიჩ|იშიბ|კიშიდ/iu,
+    headlineRequired:true,feeds:['bbc-asia','guardian-japan']},
   {id:'china',question:/ჩინეთ|პეკინ|ტაივან|china|chinese|beijing|taiwan|xi jinping/i,
     article:/\b(?:china|chinese|beijing|taiwan|xi jinping|hong kong|south china sea)\b|ჩინეთ|პეკინ|ტაივან|სი ძინპინ/iu,
     feeds:['bbc-asia','guardian-china']},
@@ -33,7 +36,7 @@ export function editorialRelevant(article,query='') {
   const text=[article?.title||'',article?.summary||''].join(' ').trim();
   if(!text)return false;
   const topic=editorialTopic(query);
-  if(topic && !topic.article.test(text))return false;
+  if(topic && !topic.article.test(topic.headlineRequired?String(article?.title||''):text))return false;
   if(!POLITICS.test(text))return false;
   // Bare geography + a routine criminal or entertainment article is not politics.
   if(ROUTINE.test(text) && !/\b(?:government|politic(?:s|al)|parliament|president|diplomat(?:ic|s)?|minister|sanctions?|security council|military|election|protest|state policy|foreign policy)\b|მთავრობ|პოლიტიკ|პარლამენტ|პრეზიდენტ|დიპლომატ|მინისტრ|სანქცი|სამხედრო|არჩევნ|პროტესტ|საგარეო/iu.test(text))return false;
