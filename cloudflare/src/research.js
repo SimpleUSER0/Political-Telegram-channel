@@ -326,6 +326,10 @@ export async function generate(c,store,query,format,edition='night',preferredUrl
       query.trim().length<3 || query.length>1000 ||
       !['morning','midday','evening','night','breaking'].includes(edition))
     throw new Halt('Invalid research request');
+  // User-requested topic posts may use an authoritative article from the previous
+  // week, while the unattended political-news schedule retains its strict 48h
+  // news window. Exceptional /breaking always remains in the tight news window.
+  if(manual && edition!=='breaking')c={...c,age:Math.max(c.age,7*86400000)};
   let stage='budget';
   try {
   const history = await store.history();
