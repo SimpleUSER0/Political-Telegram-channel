@@ -3,6 +3,20 @@ import assert from 'node:assert/strict';
 import {fixture,draft,mockTelegram,payload} from './helpers.js';
 import {publish} from '../src/worker.js';
 
+test('missing posting permission preserves the draft for publication after the owner enables it',async()=>{
+  const {c,store}=await fixture(),d=await draft(store),original=globalThis.fetch;
+  let allowed=false,sends=0;
+  const permitted=mockTelegram(async()=>{sends++;return Response.json({ok:true,result:{message_id:71}});});
+  globalThis.fetch=async(url,options)=>new URL(url).pathname.endsWith('/getChatMember')
+    ?Response.json({ok:true,result:{status:'administrator',can_post_messages:allowed}}):permitted(url,options);
+  try {
+    await assert.rejects(publish(c,store,d.id,1),/Post Messages/);
+    assert.equal((await store.draft(d.id)).state,'pending');assert.equal(sends,0);
+    assert.equal((await store.stmt("SELECT count(*) n FROM cf_audit WHERE action='approve'").first()).n,0);
+    allowed=true;assert.equal(await publish(c,store,d.id,1),71);assert.equal(sends,1);
+  } finally {globalThis.fetch=original;}
+});
+
 test('competing Publish requests send exactly one channel message',async()=>{
   const {c,store}=await fixture(),d=await draft(store);let sends=0;
   const original=globalThis.fetch;

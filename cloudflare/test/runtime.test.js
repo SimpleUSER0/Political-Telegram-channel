@@ -171,8 +171,9 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
       '</article></body></html>',{headers:{'Content-Type':'text/html'}});
     if(url.hostname==='api.telegram.org') {
       const method=url.pathname.split('/').at(-1);
-      if(method==='getMe')return Response.json({ok:true,result:{is_bot:true,username:'political_test_bot'}});
+      if(method==='getMe')return Response.json({ok:true,result:{id:555,is_bot:true,username:'political_test_bot'}});
       if(method==='getChat')return Response.json({ok:true,result:{type:'channel',username:'political_test_channel'}});
+      if(method==='getChatMember')return Response.json({ok:true,result:{status:'administrator',can_post_messages:true}});
       if(method==='sendMessage'){sends++;return Response.json({ok:true,result:{message_id:88}});}
     }
     throw new Error('Unexpected outbound request');

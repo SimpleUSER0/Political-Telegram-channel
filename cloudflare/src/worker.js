@@ -48,7 +48,8 @@ export async function checkPublishing(c) {
   const member=await telegram(c,'getChatMember',{chat_id:c.channel,user_id:bot.id});
   return {available:member?.status==='creator' ||
     (member?.status==='administrator' && member.can_post_messages===true),
-    bot:bot.username,channel:channel.username || String(channel.id),role:member?.status || 'unknown',at:now()};
+    bot:bot.username,channel:channel.username || String(channel.id),role:member?.status || 'unknown',
+    can_post_messages:member?.can_post_messages===true,at:now()};
 }
 export async function registerWebhook(c) {
   if (missing(c).length) throw new Halt('Incomplete bot configuration');
@@ -84,9 +85,10 @@ export async function notify(c,draft) {
 export async function publish(c,store,draftId,version) {
   if (!c.publish) throw new Halt('გამოქვეყნება გამორთულია: PUBLISH_ENABLED=false');
   if (missing(c,true).length) throw new Halt('კონფიგურაცია არასრულია');
-  // Identity and channel checks happen BEFORE claiming; they cannot send channel posts.
-  await verifyIdentity(c);
-  await verifyChannel(c);
+  // Permission checks happen BEFORE claiming. The owner can fix Telegram rights
+  // and press Publish again on the same pending draft without losing the version.
+  if(!(await checkPublishing(c)).available)
+    throw new Halt('ბოტს არხში Post Messages უფლება აკლია. ჩართე არხის ადმინისტრატორების პარამეტრებში და კვლავ დააჭირე Publish-ს.');
   const existing=await store.draft(draftId);
   if (!existing) throw new Halt('Draft not found');
   const payload=JSON.parse(existing.payload);
