@@ -1,6 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {editorialTopic,editorialFeeds,editorialRelevant,editorialCandidates} from '../src/editorial.js';
+import {generate} from '../src/research.js';
+import {config} from '../src/core.js';
+import {env,fixture} from './helpers.js';
 
 test('World Focus interprets country requests as POLITICAL scope, not any country news',()=>{
   assert.equal(editorialTopic('ჩინეთი').id,'china');
@@ -42,4 +45,30 @@ test('global summaries keep political coverage but exclude routine unrelated new
   ];
   assert.deepEqual(editorialCandidates(entries,'მსოფლიო').map(x=>x.title),
     [entries[1].title,entries[2].title]);
+});
+
+test('an irrelevant China crime request stops BEFORE an AI API call',async()=>{
+  const {store}=await fixture();
+  const c=config({...env(),AI_PROVIDER:'gemini',GEMINI_API_KEY:'offline-test-key',
+    GEMINI_MODEL:'gemini-2.5-flash',DISCOVERY_MODE:'feeds',SOURCE_FEEDS:'bbc-world',
+    SOURCE_DOMAINS:'bbc.co.uk,bbc.com,theguardian.com'});
+  const original=globalThis.fetch,requests=[];
+  globalThis.fetch=async url=>{
+    requests.push(String(url));
+    if(String(url).includes('googleapis.com'))throw new Error('Irrelevant article must not consume Gemini calls');
+    const article=String(url).includes('theguardian.com')?
+      'https://www.theguardian.com/world/2026/oct/17/china-nursery-report':
+      'https://www.bbc.co.uk/news/articles/china-nursery-report';
+    return new Response('<rss><channel><item><title>Nursery owner in China jailed after children poisoned</title>'+
+      '<link>'+article+'</link><pubDate>'+new Date().toUTCString()+
+      '</pubDate></item></channel></rss>',{headers:{'Content-Type':'application/rss+xml'}});
+  };
+  try {
+    await assert.rejects(generate(c,store,'ჩინეთი','STANDARD'),
+      /No recent relevant political news/);
+    assert.ok(requests.some(url=>url.includes('/asia/rss.xml')));
+    assert.ok(requests.every(url=>!url.includes('googleapis.com')));
+    const usage=(await store.status()).usage;
+    assert.equal(usage.calls,0);
+  } finally {globalThis.fetch=original;}
 });
