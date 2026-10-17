@@ -31,8 +31,8 @@ export function config(env) {
   const discovery=env.DISCOVERY_MODE || 'web_search';
   if(!['web_search','feeds'].includes(discovery))throw new Halt('Invalid DISCOVERY_MODE');
   const feeds=[...new Set((env.SOURCE_FEEDS || 'bbc-world,guardian-world,civil-ge').split(',').map(s=>s.trim()).filter(Boolean))];
-  if(discovery==='feeds' && (feeds.length<2 || feeds.some(f=>!['bbc-world','guardian-world','civil-ge','netgazeti'].includes(f))))
-    throw new Halt('SOURCE_FEEDS requires at least two known publisher feeds');
+  if(discovery==='feeds' && (feeds.length<1 || feeds.some(f=>!['bbc-world','guardian-world','civil-ge','netgazeti'].includes(f))))
+    throw new Halt('SOURCE_FEEDS requires at least one known publisher feed');
   const channel = String(env.CHANNEL_ID || '');
   if (['@cifruli_era', '@digitalera101'].includes(channel.toLowerCase()))
     throw new Halt('An existing technology channel cannot be used');
@@ -67,7 +67,7 @@ export function missing(c, research = false) {
       if (!c.env.OPENAI_API_KEY) result.push('OPENAI_API_KEY');
       if (!c.model) result.push('OPENAI_MODEL');
     }
-    if (c.domains.length < 2) result.push('SOURCE_DOMAINS (at least 2)');
+    if (c.domains.length < 1) result.push('SOURCE_DOMAINS (at least 1)');
   }
   return result;
 }
@@ -167,7 +167,6 @@ export function validatePacket(packet, sources, c, time = now()) {
   const assessments = new Map(packet.sources.map(s => [s.source_id, s]));
   if (assessments.size !== sources.length || assessments.size !== packet.sources.length ||
       sources.some(s => !assessments.has(s.id))) throw new Halt('Incomplete source assessment');
-  if (new Set(sources.map(s => new URL(s.url).hostname)).size < 2) throw new Halt('Two domains required');
   for (const source of sources) {
     const assessment = assessments.get(source.id);
     const date = Date.parse(assessment.published_at);
