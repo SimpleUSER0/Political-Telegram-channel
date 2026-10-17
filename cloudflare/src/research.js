@@ -320,7 +320,8 @@ publication dates. Avoid all history events, including paraphrases. No suitable 
   if (!allowed.size) throw new Halt('Search returned no admissible publisher article URLs');
   // Bound model input and fairly represent every configured RSS publisher.
   const selectedUrls=[],counts=new Map();
-  for(const story of search.articles || []) {
+  const discoveredArticles=c.discovery==='feeds'?editorialCandidates(search.articles || [],query):(search.articles||[]);
+  for(const story of discoveredArticles) {
     if(!allowed.has(story.url))continue;
     const publisher=story.feed || publisherGroup(story.url,c);
     if((counts.get(publisher)||0)>=12)continue;
@@ -337,7 +338,7 @@ publication dates. Avoid all history events, including paraphrases. No suitable 
         published_at:item.published_at,has_publisher_image:Boolean(item.image)}:{}),
     };
   });
-  const relevantEntries=editorialCandidates(catalogEntries,query);
+  const relevantEntries=c.discovery==='feeds'?editorialCandidates(catalogEntries,query):catalogEntries;
   if(!relevantEntries.length)throw new Halt('No recent relevant political news in accessible publisher feeds for this topic');
   const editorialCatalog=relevantEntries.map((entry,source_id)=>({...entry,source_id}));
   stage='candidate';
