@@ -14,7 +14,7 @@ export function number(value, fallback, min, max) {
 }
 export function config(env) {
   const provider=String(env.AI_PROVIDER || (env.GEMINI_API_KEY?'gemini':'openai')).toLowerCase();
-  if (!['gemini','openai'].includes(provider)) throw new Halt('AI_PROVIDER must be gemini or openai');
+  if (!['gemini','openai','workers-ai'].includes(provider)) throw new Halt('AI_PROVIDER must be gemini, openai or workers-ai');
   let origins = {}, hours = [];
   try {
     origins = JSON.parse(env.SOURCE_ORIGIN_GROUPS || '{}');
@@ -42,7 +42,8 @@ export function config(env) {
     username: String(env.EXPECTED_BOT_USERNAME || '').replace(/^@/, '').toLowerCase(),
     research: enabled(env.RESEARCH_ENABLED), publish: enabled(env.PUBLISH_ENABLED),
     schedule: enabled(env.SCHEDULE_ENABLED), provider,
-    model: provider==='gemini'?(env.GEMINI_MODEL || 'gemini-2.5-flash'):(env.OPENAI_MODEL || ''),
+    model: provider==='gemini'?(env.GEMINI_MODEL || 'gemini-2.5-flash'):
+      provider==='workers-ai'?'@cf/qwen/qwen3-30b-a3b-fp8':(env.OPENAI_MODEL || ''),
     dailyRuns: number(env.MAX_DAILY_RUNS, provider==='gemini'?1:4, 1, 24),
     dailyCalls: number(env.MAX_DAILY_CALLS, provider==='gemini'?12:40, 1, 200),
     maxTokens: number(env.MAX_OUTPUT_TOKENS, 4000, 512, 8000),
@@ -63,6 +64,9 @@ export function missing(c, research = false) {
     if (c.provider==='gemini') {
       if (!c.env.GEMINI_API_KEY) result.push('GEMINI_API_KEY');
       if (!/^gemini-[a-zA-Z0-9.\-]+$/.test(c.model)) result.push('GEMINI_MODEL');
+    } else if(c.provider==='workers-ai') {
+      if(!c.env.AI || typeof c.env.AI.run!=='function')result.push('Cloudflare Workers AI binding AI');
+      if(c.discovery!=='feeds')result.push('DISCOVERY_MODE=feeds required for Workers AI');
     } else {
       if (!c.env.OPENAI_API_KEY) result.push('OPENAI_API_KEY');
       if (!c.model) result.push('OPENAI_MODEL');
