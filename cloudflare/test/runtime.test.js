@@ -148,7 +148,7 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
           const second=catalog.find(x=>x.url==='https://example.org/news').source_id;
           const selected={event_key:'meeting-'+time,topic:'Meeting',event_at:time,source_ids:[first,second]};
           data={candidates:fallback?[{...selected,event_key:'unavailable-event-'+time,
-            source_ids:[catalog.find(x=>x.url.endsWith('/unavailable')).source_id,second]},selected]:[selected]};
+            source_ids:[catalog.find(x=>x.url.endsWith('/unavailable')).source_id]},selected]:[selected]};
         }
         else if(properties.publishable) {
           const input=JSON.parse(body.input || body.contents[0].parts[0].text);
