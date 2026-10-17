@@ -1,5 +1,22 @@
 # Current post format — 2026-10-17
 
+## Editorial improvements
+
+The newsroom now uses one trustworthy publisher article with a verifiable publication date.
+Its source origin is derived from the actual publisher URL rather than an LLM guess.
+Stories without an article image can use an image supplied in that same publisher's
+RSS feed; unrelated URLs and AI-generated images are never substituted.
+The bot tries other ranked political stories when an article has no acceptable
+photograph or fails evidence checks, while provider errors and quota failures stop safely.
+
+Selection emphasizes material political and geopolitical developments, avoids
+celebrity/lifestyle filler, and accepts genuinely new developments on covered topics.
+Publisher article evidence sent to AI is limited to a small set of exact excerpts and
+RSS discovery metadata is capped per publisher, reducing repeated token usage.
+Each complete post still has a real source image, Georgian caption and a single source
+button. Publication still requires human approval.
+
+
 New posts match the Digital Era layout: publisher article photo, clear Georgian title,
 short paragraphs in a single photo caption, and exactly one `🔗 წყარო` button.
 Internal source records are retained. The primary source is the article providing the image.
