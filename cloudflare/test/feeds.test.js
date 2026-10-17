@@ -16,14 +16,14 @@ test('publisher RSS admits only dated allowlisted article URLs and deduplicates 
 test('feed discovery cannot follow a publisher redirect to a private or unrelated host',async()=>{
   const original=globalThis.fetch,seen=[];
   globalThis.fetch=async url=>{seen.push(url);return new Response(null,{status:302,headers:{Location:'https://127.0.0.1/private'}});};
-  try {await assert.rejects(discoverFeeds(settings()),/Fewer than two/);assert.equal(seen.length,3);
+  try {await assert.rejects(discoverFeeds(settings()),/No accessible recent articles/);assert.equal(seen.length,3);
     assert.ok(seen.every(url=>!url.includes('127.0.0.1')));
   }finally{globalThis.fetch=original;}
 });
 test('feed mode is an explicit configuration choice and rejects unknown feed targets',()=>{
   assert.equal(config({}).discovery,'web_search');
   assert.throws(()=>config({DISCOVERY_MODE:'feeds',SOURCE_FEEDS:'bbc-world,internal-metadata'}),/known publisher feeds/);
-  assert.throws(()=>config({DISCOVERY_MODE:'feeds',SOURCE_FEEDS:'bbc-world'}),/at least two/);
+  assert.deepEqual(config({DISCOVERY_MODE:'feeds',SOURCE_FEEDS:'bbc-world'}).feeds,['bbc-world']);
 });
 test('Georgian publisher feed dates remain tied to their own discovered articles',()=>{
   const c=config({SOURCE_DOMAINS:'civil.ge,netgazeti.ge',DISCOVERY_MODE:'feeds',SOURCE_FEEDS:'civil-ge,netgazeti'});
