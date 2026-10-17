@@ -1,6 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {georgianQualityIssues,requireGeorgianQuality,GEORGIAN_STYLE_EXAMPLES} from '../src/georgian-quality.js';
+import {publish} from '../src/worker.js';
+import {fixture,payload,mockTelegram} from './helpers.js';
 
 test('reject actual gibberish seen in pending political news draft',()=>{
   const bad={title:'მასკირებული სელჩები დაარტყეს ევროპელი დიპლომატები დასავლეთ ბანკში',
@@ -26,4 +28,23 @@ test('reject English-only, very long titles and known machine calques',()=>{
   assert.ok(georgianQualityIssues({title:'News',body:'The minister announced diplomatic talks with foreign leaders during the parliamentary session in the country.'}).includes('georgian-language-share'));
   assert.ok(georgianQualityIssues({title:'საინტერესო სიტყვა '.repeat(20),body:'ოფიციალური შეხვედრის შესახებ ინფორმაცია გავრცელდა.'}).includes('headline-too-long'));
   assert.ok(georgianQualityIssues({title:'ევროკავშირის მოლაპარაკება',body:'ბრიტანიის მიერ გადაწყვეტილების მიღება მოხდა.'}).includes('machine-translated-phrase'));
+});
+
+test('Publish rejects previously generated broken Georgian without touching channel or draft state',async()=>{
+  const {c,store}=await fixture(),p=payload();
+  p.article.title='მასკირებული სელჩები დაარტყეს ევროპელი დიპლომატები დასავლეთ ბანკში';
+  const draft=await store.createDraft({event_key:'bad-georgian-old-draft',topic:'Politics'},p,3600000);
+  const original=globalThis.fetch;
+  let channelSends=0;
+  globalThis.fetch=mockTelegram(async method=>{
+    if(method==='getChatMember')return Response.json({ok:true,result:{status:'administrator',can_post_messages:true}});
+    if(method==='sendMessage'||method==='sendPhoto')channelSends++;
+    return Response.json({ok:true,result:{message_id:42}});
+  });
+  try {
+    await assert.rejects(publish(c,store,draft.id,1),/ქართული ტექსტის ხარისხის/);
+    assert.equal(channelSends,0);
+    assert.equal((await store.draft(draft.id)).state,'pending');
+    assert.equal((await store.stmt('SELECT count(*) AS n FROM cf_audit').first()).n,0);
+  } finally {globalThis.fetch=original;}
 });
