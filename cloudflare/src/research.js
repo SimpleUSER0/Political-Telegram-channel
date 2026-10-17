@@ -238,7 +238,7 @@ export function excerptCatalog(sources,focus='') {
     if(!excerpts.length)throw new Halt('Source contains no citable excerpts');
     // Send a bounded set of verbatim passages, not the entire 45 KB news article,
     // preserving the opening and ranking later passages against the event topic.
-    const keywords=[...new Set((normalized(focus).match(/[\\p{L}\\p{N}]{4,}/gu)||[])
+    const keywords=[...new Set((normalized(focus).match(/[\p{L}\p{N}]{4,}/gu)||[])
       .filter(word=>!['news','world','about','from','with','that','this','today'].includes(word)))];
     const scored=excerpts.map((entry,index)=>({entry,index,
       score:keywords.reduce((n,word)=>n+(normalized(entry.text).includes(word)?1:0),0)}));
@@ -259,7 +259,7 @@ export function normalizePublisherEvidence(packet,sources,c) {
   const assessed=packet.sources.map(record=>{
     const source=lookup.get(record.source_id);
     if(!source)return record; // Existing validator rejects unknown source IDs.
-    const host=new URL(source.url).hostname.replace(/^www\\./,'');
+    const host=new URL(source.url).hostname.replace(/^www\./,'');
     const publisher=Object.entries(publishers).find(([domain])=>host===domain || host.endsWith('.'+domain))?.[1]||host;
     return {...record,origin_group:publisherGroup(source.url,c),publisher};
   });
