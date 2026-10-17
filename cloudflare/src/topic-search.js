@@ -54,7 +54,7 @@ export function rankRequestedArticles(articles,searchTerms,max=3) {
     return {article,matched};
   });
   const hasDirectMatch=ranked.some(x=>x.matched>0);
-  return ranked.filter(x=>hasDirectMatch?x.matched>0:x.article.feed==='gdelt-index')
+  return ranked.filter(x=>hasDirectMatch?x.matched>0:['gdelt-index','guardian-api','bing-index'].includes(x.article.feed))
     .sort((a,b)=>b.matched-a.matched||
       Date.parse(b.article.published_at)-Date.parse(a.article.published_at))
     .slice(0,max).map(x=>x.article);
