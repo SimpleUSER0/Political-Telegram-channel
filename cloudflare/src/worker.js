@@ -3,6 +3,8 @@ import {Halt, articleText, config, equalSecret, id, json, missing, now, readText
 import {ensureSchema} from './schema.js';
 import {Store} from './store.js';
 import {checkSources, editDraft, fetchSource, generate, llm, sourceButtons} from './research.js';
+import {discoverFeeds} from './feeds.js';
+import {breakingCandidates,editionAtHour,localClock,REGULAR_QUERY} from './news-plan.js';
 
 export class TelegramFailure extends Error {
   constructor(message, definitive=false) { super(message); this.definitive=definitive; }
@@ -180,8 +182,8 @@ async function handleControl(c,store,payload,job) {
   const text=payload.message?.text || '', [first,...lines]=text.split('\n');
   const [rawCommand,...args]=first.trim().split(/\s+/), command=rawCommand.split('@')[0];
   if (command==='/start' || command==='/help') return tell(c,
-    'პოლიტიკური რედაქცია\n/news თემა — ახალი კვლევა\n/pending — მონახაზები\n/show ID — მონახაზი\n/status — სტატუსი\n/edit ID:VERSION — სათაური, ცარიელი ხაზი, ტექსტი\n\nყველა პოსტი საჭიროებს შენს Publish-ს. კვლევა სრულდება დაგეგმილი Worker-ით.');
-  if (command==='/status') return tell(c,JSON.stringify({provider:c.provider,model:c.model,research:c.research,publish:c.publish,
+    'მსოფლიო ფოკუსი — პოლიტიკური რედაქცია\n/news თემა — დამატებითი კვლევა\n/breaking თემა — დღის განსაკუთრებული ამბავი (მაქს. 1)\n/pending — მონახაზები\n/show ID — მონახაზი\n/status — სტატუსი\n/edit ID:VERSION — სათაური, ცარიელი ხაზი, ტექსტი\n\nდაგეგმილი მონახაზები: 09:00 / 13:00 / 18:00 / 21:00 (საქართველო). გამოქვეყნება მხოლოდ შენი Publish-ით.');
+  if (command==='/status') return tell(c,JSON.stringify({provider:c.provider,model:c.model,research:c.research,publish:c.publish,schedule_hours_tbilisi:c.hours,
     missing:missing(c,true),...await store.status()},null,2));
   if (command==='/pending') {
     const drafts=await store.pending();
@@ -195,6 +197,17 @@ async function handleControl(c,store,payload,job) {
     // Deterministic id: re-running a control job cannot enqueue another paid research run.
     await store.enqueue('research',{query,format:'STANDARD'},'research-'+job.id);
     return tell(c,'კვლევა რიგშია. მომზადებული მონახაზი აქ მოვა.');
+  }
+  if (command==='/breaking') {
+    const query=args.join(' ');
+    if(!c.research || missing(c,true).length)throw new Halt('განსაკუთრებული კვლევა გამორთულია');
+    if(query.length<3 || query.length>1000)throw new Halt('გამოიყენე /breaking და მიუთითე თემა');
+    const day=localClock(now()).day;
+    const slot=await store.stmt('INSERT OR IGNORE INTO cf_slots(slot,created_at) VALUES (?,?)',
+      'breaking-day-'+day,now()).run();
+    if(!slot.meta?.changes)return tell(c,'დღევანდელი დამატებითი Breaking News უკვე გამოყენებულია. ჩვეულებრივი /news კვლავ მუშაობს.');
+    await store.enqueue('research',{query,format:'QUICK',edition:'breaking'},'breaking-'+day+'-manual');
+    return tell(c,'Breaking News-ის მონახაზი რიგშია. გამოქვეყნება შენს დადასტურებას მოითხოვს.');
   }
   if (command==='/edit') {
     const match=/^([a-f0-9]{20}):([1-9]\d{0,5})$/.exec(args[0] || '');
@@ -272,7 +285,7 @@ export async function drain(c,store,kind,limit=1) {
         await store.audit('webhook_setup_verified',null,'cloudflare-admin',job.id);
       }
       else if (kind==='research') {
-        const created=await generate(c,store,payload.query,payload.format);
+        const created=await generate(c,store,payload.query,payload.format,payload.edition||'night',payload.preferredUrl||null);
         // A notification error must not delete a completed draft or repeat paid research.
         try { await notify(c,created,store); } catch { console.warn('Draft created; owner notification unavailable'); }
       } else if (kind==='edit') {
@@ -297,15 +310,43 @@ export async function drain(c,store,kind,limit=1) {
 
 export async function schedule(c,store,time) {
   if (!c.research || !c.schedule || !c.hours.length || missing(c,true).length) return;
-  const local=new Date(time+4*3600000); // Asia/Tbilisi currently UTC+4, no DST.
-  if (!c.hours.includes(local.getUTCHours()) || local.getUTCMinutes()>14) return;
-  const slot=local.toISOString().slice(0,13);
+  const clock=localClock(time);
+  if (!c.hours.includes(clock.hour) || clock.minute>14) return;
+  const slot=clock.slot,edition=editionAtHour(clock.hour)||'night';
   // A single atomic batch makes cron overlap and retry harmless.
   await store.db.batch([
     store.stmt('INSERT OR IGNORE INTO cf_slots(slot,created_at) VALUES (?,?)',slot,now()),
     store.stmt("INSERT OR IGNORE INTO cf_jobs(id,kind,payload,created_at) VALUES (?,'research',?,?)",
-      'schedule-'+slot,JSON.stringify({query:'მნიშვნელოვანი ახალი პოლიტიკური და გეოპოლიტიკური ამბავი საქართველოსა და მსოფლიოში',format:'STANDARD'}),now()),
+      'schedule-'+slot,JSON.stringify({query:REGULAR_QUERY,format:'STANDARD',edition}),now()),
   ]);
+}
+
+
+/**
+ * At most one exceptional fifth draft per Tbilisi day.
+ * Check at hh:30 only; never spend AI calls during headline screening.
+ * The candidate must come from a dated publisher RSS feed, be <=90 minutes
+ * old, and match explicit extraordinary political-event patterns.
+ */
+export async function scheduleBreaking(c,store,time) {
+  const clock=localClock(time);
+  if(!c.research || !c.schedule || missing(c,true).length ||
+     clock.hour<8 || clock.hour>22 || clock.minute!==30)return;
+  const daily='breaking-day-'+clock.day;
+  if(await store.stmt('SELECT slot FROM cf_slots WHERE slot=?',daily).first())return;
+  const scan=await store.stmt('INSERT OR IGNORE INTO cf_slots(slot,created_at) VALUES (?,?)',
+    'breaking-scan-'+clock.slot,now()).run();
+  if(!scan.meta?.changes)return;
+  let news;
+  try {news=await discoverFeeds({...c,feeds:c.feeds.slice(0,3)},'');}
+  catch{return;} // A temporarily unavailable publisher is not breaking news.
+  const candidates=breakingCandidates(news.articles,await store.history(),time);
+  if(!candidates.length)return;
+  const claimed=await store.stmt('INSERT OR IGNORE INTO cf_slots(slot,created_at) VALUES (?,?)',
+    daily,now()).run();
+  if(!claimed.meta?.changes)return;
+  await store.enqueue('research',{query:REGULAR_QUERY,format:'QUICK',
+    edition:'breaking',preferredUrl:candidates[0].url},'breaking-'+clock.day+'-auto');
 }
 
 async function admin(request,url,c,store) {
@@ -418,6 +459,7 @@ export default {
       await drain(c,store,'setup',1);
       await drain(c,store,'control',3);
       await schedule(c,store,event.scheduledTime);
+      await scheduleBreaking(c,store,event.scheduledTime);
       await drain(c,store,'edit',1);
       await drain(c,store,'research',1);
     };
