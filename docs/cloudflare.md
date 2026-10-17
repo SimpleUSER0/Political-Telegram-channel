@@ -45,8 +45,10 @@ Existing archived text posts are unchanged. New caption drafts target 950 UTF-16
 edits over Telegram's 1024-unit photo caption limit are rejected without truncating text.
 If the selected articles have no supported publisher image, the run stops with a clear reason.
 
-Research uses three model requests in feed mode: event selection, publisher-source review,
-and Georgian drafting. A separate repeated AI fact-check is no longer made for new drafts.
+Research uses two model requests in feed mode: publisher-source review and Georgian
+ drafting. Event selection uses the exact publisher RSS title, URL and publication time,
+not an AI-generated candidate. This prevents fabricated or mismatched event headings
+and reduces token usage. A separate repeated AI fact-check is not made for new drafts.
 One recent, dated article from a credible publisher is now sufficient to draft a post;
 claims from a single source must be attributed instead of presented as independently proven. Unknown URLs, duplicate events and unsupported source references remain
 blocked. Editing still checks the changed text against the original source packet once.
