@@ -1,5 +1,24 @@
 # Current post format — 2026-10-17
 
+## AI provider recovery — Google Gemini location errors (2026-10-17)
+
+Gemini API can return HTTP 400 FAILED_PRECONDITION when called from Cloudflare Workers,
+even while the account works in Google AI Studio. This is not a newsroom sourcing failure.
+The production newsroom now supports AI_PROVIDER=workers-ai, using Cloudflare's
+@cf/qwen/qwen3-30b-a3b-fp8 model through the AI Worker binding. This model was
+successfully queried via the account's Workers AI API before release. The same
+dated publisher RSS discovery, local JSON/evidence validation, D1, Telegram preview
+and manual publication approval remain unchanged. Gemini credentials can be
+preserved for an optional future return; no automatic fallback uses paid providers.
+
+Deployment requires a binding {type:"ai",name:"AI"} alongside existing D1/secrets
+and AI_PROVIDER=workers-ai. DISCOVERY_MODE must stay feeds (the hosted model does
+not have Google Search grounding). Usage is subject to Cloudflare's Workers AI
+free quota; exceeding the quota should stop with a clear error rather than
+silently incur external provider charges. Qwen is a different model, so Georgian
+editorial quality and full live post generation still require owner preview.
+
+
 ## Editorial improvements
 
 The newsroom now uses one trustworthy publisher article with a verifiable publication date.
