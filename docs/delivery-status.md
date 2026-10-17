@@ -19,7 +19,7 @@ The older Python/Railway handoff below is historical, not the current activation
 - All 79 Worker tests passed locally. GitHub run 39030090224 passed the Worker, SQLite,
   PostgreSQL and container jobs for the reviewed PR head.
 
-## Remaining live acceptance gates
+## Live acceptance results and operating limits
 
 1. A fresh infrastructure diagnostic at 12:07 UTC confirms `can_post_messages=true`
    for the expected bot and channel. Earlier missing-permission errors are historical.
@@ -27,11 +27,17 @@ The older Python/Railway handoff below is historical, not the current activation
    attempts stopped for missing corroboration or no qualifying candidate. A passing unit test
    is not proof that every live topic will yield a publishable draft. Do not weaken the checks
    or label unsupported claims verified to force output.
-3. Request `/news` in the bot, review the source links and approve a
-   pending draft. Confirm one channel post and no duplicate on a repeated button press.
-   A historical `published` database row alone is not fresh end-to-end acceptance evidence.
+3. The bounded live handoff research completed successfully: draft `2d1387162b8a4cfaa112`
+   passed the fact check, received an owner approval audit, and Telegram returned message ID 5.
+   The publication audit and draft state both confirm publication:
+   https://t.me/Msofliofokusi/5 . Duplicate-publication protection passes automated tests;
+   an additional live repeated-button test was not performed during this handoff.
+4. The daily run budget reached 10/10 (21/24 model calls). Further research on October 17
+   is blocked by the existing cap; the UTC daily counter resets at 04:00 Asia/Tbilisi.
+   No cap was bypassed or increased.
 
-No channel post was sent as part of this handoff. Publication remains owner-controlled.
+The assistant initiated research only. The owner approved the resulting publication through
+Telegram; publication remains owner-controlled.
 
 ---
 
