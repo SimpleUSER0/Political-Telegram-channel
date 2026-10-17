@@ -184,6 +184,34 @@ Return candidates=[] if evidence is inadequate. Never invent a URL or date.`,
       {candidate:selected,history},object({same_event:bool}));
     if (comparison.same_event) throw new Halt('Duplicate underlying event');
   }
+  // Models can reformat feed URLs (tracking parameters, trailing slash, etc.).
+  // Select only the EXACT publisher-feed URLs already discovered; never follow
+  // a new model-generated URL. This avoids burning an entire run on harmless
+  // URL normalization differences without weakening the source allowlist.
+  if (c.discovery==='feeds') {
+    const feedArticles=search.articles || [];
+    const byExact=new Map(feedArticles.map(a=>[a.url,a.url]));
+    const byCanonical=new Map();
+    for(const a of feedArticles) {
+      try {
+        const u=new URL(a.url);
+        u.hash='';
+        u.searchParams.delete('utm_source');u.searchParams.delete('utm_medium');
+        u.searchParams.delete('utm_campaign');
+        byCanonical.set(u.href.replace(/\\/$/,''),a.url);
+      } catch {}
+    }
+    selected.source_urls=selected.source_urls.map(raw=>{
+      if(byExact.has(raw))return raw;
+      try {
+        const u=new URL(raw);
+        u.hash='';
+        u.searchParams.delete('utm_source');u.searchParams.delete('utm_medium');
+        u.searchParams.delete('utm_campaign');
+        return byCanonical.get(u.href.replace(/\\/$/,'')) || raw;
+      } catch {return raw;}
+    });
+  }
   const urls = [...new Set(selected.source_urls.map(u=>sourceUrl(u,c.domains)))];
   if (urls.length<2 || urls.length>6 || urls.some(u=>!allowed.has(u))) throw new Halt('Undiscovered source URL');
   stage='source-fetch';
