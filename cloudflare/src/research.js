@@ -318,7 +318,7 @@ covered by claim_ids. Reject unsupported assertions, missing uncertainty or stre
   return check;
 }
 
-export async function generate(c,store,query,format,edition='night',preferredUrl=null) {
+export async function generate(c,store,query,format,edition='night',preferredUrl=null,manual=false) {
   if (!c.research || missing(c,true).length) throw new Halt('Research is disabled or not configured');
   if (!['FLASH','QUICK','STANDARD','DEEP'].includes(format) || typeof query!=='string' ||
       query.trim().length<3 || query.length>1000 ||
@@ -327,21 +327,30 @@ export async function generate(c,store,query,format,edition='night',preferredUrl
   let stage='budget';
   try {
   const history = await store.history();
+  const directSearch=Boolean(manual && c.provider==='gemini');
+  const usingFeeds=c.discovery==='feeds' && !directSearch;
+  // When the owner supplies any topic, Gemini searches real publisher articles
+  // instead of relying on a predefined country list or the world RSS catalog.
+  const modelConfig=manual?{...c,manualTopic:true}:c;
   // Reserve the run only when the remaining daily call budget can cover an
   // entire three/four-call workflow; avoid a predictable partial paid run.
-  const requiredCalls=c.discovery==='feeds'?2:4;
+  const requiredCalls=usingFeeds?2:directSearch?5:4;
   await store.requireCallCapacity(c.dailyCalls,requiredCalls);
   await store.reserve('runs',c.dailyRuns);
   stage='discovery';
-  const search = c.discovery==='feeds'?await discoverFeeds(c,query):await llm(c,store,`Find one important new political event matching the query.
-Collect 1-6 specific, recent news article URLs from trustworthy publishers. Give exact event and
-publication dates. Avoid all history events, including paraphrases. No suitable event is acceptable.`,
+  const search = usingFeeds?await discoverFeeds(c,query):await llm(modelConfig,store,`Find credible, dated, REAL publisher articles DIRECTLY about the owner's requested topic.
+The user may ask about ANY subject, geographic area, scientific question, person or event.
+Do not switch to general political news, another country or a loosely related story.
+Prefer a specific article with a publisher photograph. If recent relevant stories are not
+available, be explicit about the lack of evidence. Only return publisher URLs actually
+provided by Google Search grounding, never invent a URL or an article.
+Use these publishers when possible; the strict URL allowlist is enforced separately.`,
     {now:new Date().toISOString(),query,history},null,true);
   const allowed = retrievedUrls(search,c.domains);
   if (!allowed.size) throw new Halt('Search returned no admissible publisher article URLs');
   // Bound model input and fairly represent every configured RSS publisher.
   const selectedUrls=[],counts=new Map();
-  const discoveredArticles=c.discovery==='feeds'?editorialCandidates(search.articles || [],query):(search.articles||[]);
+  const discoveredArticles=usingFeeds?editorialCandidates(search.articles || [],query):(search.articles||[]);
   for(const story of discoveredArticles) {
     if(!allowed.has(story.url))continue;
     const publisher=story.feed || publisherGroup(story.url,c);
@@ -359,14 +368,14 @@ publication dates. Avoid all history events, including paraphrases. No suitable 
         published_at:item.published_at,has_publisher_image:Boolean(item.image)}:{}),
     };
   });
-  const relevantEntries=c.discovery==='feeds'?editorialCandidates(catalogEntries,query):catalogEntries;
+  const relevantEntries=usingFeeds?editorialCandidates(catalogEntries,query):catalogEntries;
   if(!relevantEntries.length)throw new Halt('No recent relevant political news in accessible publisher feeds for this topic');
   const scopedEntries=preferredUrl?relevantEntries.filter(entry=>entry.url===preferredUrl):relevantEntries;
   if(!scopedEntries.length)throw new Halt('Requested breaking article is not in the current trusted publisher feed');
   const editorialCatalog=scopedEntries.map((entry,source_id)=>({...entry,source_id}));
   stage='candidate';
-  const discovery = c.discovery==='feeds'?{candidates:publisherCandidates(editorialCatalog,history,3,edition)}:
-    await llm(c,store,`Act as an editor selecting up to THREE different, consequential CURRENT POLITICAL stories.
+  const discovery = usingFeeds?{candidates:publisherCandidates(editorialCatalog,history,3,edition)}:
+    await llm(modelConfig,store,`Act as an editor selecting up to THREE different, consequential CURRENT POLITICAL stories.
 Follow the owner's /news topic strictly when specific; for a broad daily-news query prefer
 elections, legislation, governments, diplomacy, security, wars, sanctions, protests and major
 policy decisions, including Georgian and international developments. Do NOT prioritize celebrity,
@@ -380,9 +389,10 @@ but a rephrasing of the same underlying event is not. Do not invent timestamps; 
 publisher's known publication time if the event time is unavailable.
 If the first candidate lacks a usable publisher photograph, other candidates provide fallback.
 When significance is comparable, prefer stories with has_publisher_image=true.
-IMPORTANT: The source_catalog has ALREADY been screened against this specific user topic and
-political relevance. Choose only genuinely political/geopolitical developments, never routine
-criminal cases, celebrity, health, sports or lifestyle articles even if their country matches.
+IMPORTANT: Follow the owner's EXACT requested subject, including non-political topics
+when explicitly requested manually. A publisher's generic political article is NOT a relevant
+replacement for another requested country, person, issue or event. For normal scheduled
+briefings choose substantive political/geopolitical developments. All source_ids MUST exist.
 Return [] only if no recent relevant article exists in the catalog.`,
     {now:new Date().toISOString(),query,history,
       research:c.discovery==='feeds'?'Publisher RSS article metadata is in source_catalog':outputText(search).slice(0,3000),
@@ -431,6 +441,24 @@ Return [] only if no recent relevant article exists in the catalog.`,
       continue;
     }
     const sources=[{...primary,id:0}];
+    if(directSearch){
+      // An LLM-selected search snippet is not enough: the real fetched publisher
+      // article must centrally concern the original user topic.
+      stage='topic-relevance';
+      const verdict=await llm(modelConfig,store,`Decide whether this FULL publisher article is
+CENTRALLY about the user's specific request, NOT simply mentioning one keyword in passing.
+Do not approve unrelated news from a different country or subject, even if political.
+If the request is 'Japan' and the article is about US-Russia sanctions, reject.
+Answer based ONLY on the exact retrieved article, its title and excerpt. Be strict.`,
+        {user_query:query,model_selected_title:candidate.topic,
+          source_article_url:primary.url,source_excerpt:primary.text.slice(0,4200)},
+        object({relevant:bool,reason:s}));
+      if(!verdict.relevant){
+        attempt.rejected='Source is not centrally about requested topic';
+        lastEditorialError=attempt.rejected;
+        continue;
+      }
+    }
     await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('research_source_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
       JSON.stringify({at:now(),selection:candidate,attempts})).run();
     try {
@@ -438,7 +466,7 @@ Return [] only if no recent relevant article exists in the catalog.`,
       // Save two calls for the source-backed review and Georgian drafting.
       await store.requireCallCapacity(c.dailyCalls,2);
       stage='verification';
-      const assessment=await llm(c,store,`Check whether this exact underlying event has already been posted.
+      const assessment=await llm(modelConfig,store,`Check whether this exact underlying event has already been posted.
 A materially NEW announcement, official action or confirmed development is not a duplicate.
 Use ONLY the retrieved publisher excerpts and their numbered IDs. For one reputable source,
 record supported claims as ATTRIBUTED to its publisher or quoted actor, not as independently
@@ -460,7 +488,7 @@ factual contradictions, unsupported assertions, or repetition without material n
       }
       validatePacket(packet,sources,c);
       stage='draft';
-      const generatedArticle=await llm(c,store,`${GEORGIAN_STYLE_EXAMPLES}\n\nWrite a natural, precise Georgian political Telegram post based EXCLUSIVELY on the
+      const generatedArticle=await llm(modelConfig,store,`${GEORGIAN_STYLE_EXAMPLES}\n\nWrite a natural, precise Georgian political Telegram post based EXCLUSIVELY on the
 evidence packet. Strong informative headline, direct news lead, 2-3 short coherent paragraphs;
 2-4 useful facts explaining what happened, who is involved and why it matters.
 Prefer 1-3 very short clear Georgian sentences over 3 paragraphs of filler.
@@ -496,7 +524,7 @@ Do not append metadata, pseudo-citations or numbered IDs.`,
         // Keep the verified evidence packet as the ground truth, not the bad wording.
         await store.requireCallCapacity(c.dailyCalls,1);
         stage='georgian-revision';
-        const revised=await llm(c,store,`${GEORGIAN_STYLE_EXAMPLES}
+        const revised=await llm(modelConfig,store,`${GEORGIAN_STYLE_EXAMPLES}
 
 You are the final Georgian copy editor. The first draft FAILED due to malformed
 Georgian or repeated phrases. Do NOT copy its broken grammar, and never copy
