@@ -1,4 +1,5 @@
 import {Halt,now,readText,sourceUrl} from './core.js';
+import {editorialFeeds} from './editorial.js';
 
 // Deliberately fixed publisher-operated feeds, never model-supplied fetch targets.
 export const FEEDS=Object.freeze({
@@ -6,8 +7,17 @@ export const FEEDS=Object.freeze({
   'guardian-world':'https://www.theguardian.com/world/rss',
   'civil-ge':'https://civil.ge/feed',
   'netgazeti':'https://netgazeti.ge/feed/',
+  'bbc-asia':'https://feeds.bbci.co.uk/news/world/asia/rss.xml',
+  'bbc-middle-east':'https://feeds.bbci.co.uk/news/world/middle_east/rss.xml',
+  'guardian-china':'https://www.theguardian.com/world/china/rss',
+  'guardian-us-politics':'https://www.theguardian.com/us-news/us-politics/rss',
+  'guardian-middle-east':'https://www.theguardian.com/world/middleeast/rss',
+  'guardian-ukraine':'https://www.theguardian.com/world/ukraine/rss',
 });
-const PUBLISHERS={'bbc-world':['bbc.co.uk','bbc.com'],'guardian-world':['theguardian.com'],'civil-ge':['civil.ge'],'netgazeti':['netgazeti.ge']};
+const PUBLISHERS={'bbc-world':['bbc.co.uk','bbc.com'],'guardian-world':['theguardian.com'],'civil-ge':['civil.ge'],'netgazeti':['netgazeti.ge'],
+  'bbc-asia':['bbc.co.uk','bbc.com'],'bbc-middle-east':['bbc.co.uk','bbc.com'],
+  'guardian-china':['theguardian.com'],'guardian-us-politics':['theguardian.com'],
+  'guardian-middle-east':['theguardian.com'],'guardian-ukraine':['theguardian.com']};
 export function feedPublication(entries,discoveredUrl,finalUrl) {
   const entry=entries?.find(e=>e.url===discoveredUrl);
   if(!entry || entry.feed_url!==FEEDS[entry.feed])return null;
@@ -31,6 +41,12 @@ const IMAGE_DOMAINS={
   'bbc-world':['bbc.co.uk','bbc.com','ichef.bbci.co.uk'],
   'guardian-world':['theguardian.com','i.guim.co.uk','media.guim.co.uk'],
   'civil-ge':['civil.ge'], 'netgazeti':['netgazeti.ge'],
+  'bbc-asia':['bbc.co.uk','bbc.com','ichef.bbci.co.uk'],
+  'bbc-middle-east':['bbc.co.uk','bbc.com','ichef.bbci.co.uk'],
+  'guardian-china':['theguardian.com','i.guim.co.uk','media.guim.co.uk'],
+  'guardian-us-politics':['theguardian.com','i.guim.co.uk','media.guim.co.uk'],
+  'guardian-middle-east':['theguardian.com','i.guim.co.uk','media.guim.co.uk'],
+  'guardian-ukraine':['theguardian.com','i.guim.co.uk','media.guim.co.uk'],
 };
 function rssPhoto(item,name,articleUrl) {
   if(!IMAGE_DOMAINS[name])return null;
@@ -68,9 +84,9 @@ export function parseFeed(xml,c,name=null) {
   }
   return entries;
 }
-export async function discoverFeeds(c) {
+export async function discoverFeeds(c,query='') {
   const articles=new Map(),used=[];
-  for(const name of c.feeds) {
+  for(const name of editorialFeeds(query,c.feeds)) {
     const initial=FEEDS[name];
     if(!initial)throw new Halt('Unknown source feed');
     let url=initial;
