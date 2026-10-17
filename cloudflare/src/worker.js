@@ -361,11 +361,16 @@ export async function drain(c,store,kind,limit=1) {
           const results=await Promise.all(targets.map(async ([name,url])=>{
             try{
               const res=await fetch(url,{redirect:'follow',signal:AbortSignal.timeout(7500)});
-              const body=(await res.text()).slice(0,4000);
+              const body=(await res.text()).slice(0,35000);
               return {name,http:res.status,content_type:res.headers.get('content-type'),
                 length:body.length,valid_rss:/<rss[\s>]/i.test(body),
                 rss_items:(body.match(/<item(?:\s|>)/gi)||[]).length,
                 has_articles:/"articles"\s*:/i.test(body),has_results:/"results"\s*:/i.test(body),
+                sample_items:name==='bing'?[...body.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)].slice(0,5).map(it=>{
+                  const raw=it[1],match=tag=>new RegExp('<'+tag+'(?:\\s[^>]*)?>([\\s\\S]*?)<\\/'+tag+'>','i').exec(raw)?.[1]||'';
+                  return {title:match('title').slice(0,180),link:match('link').slice(0,700),
+                    date:match('pubDate').slice(0,100)};
+                }):undefined,
                 start:body.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').slice(0,160)};
             }catch(e){return {name,error:String(e?.message||e).slice(0,120)};}
           }));
