@@ -13,27 +13,36 @@ test('Any user topic is routed to a post or to Gemini conversation, with no coun
   assert.equal(isConversation('რომის იმპერია'),false);
   assert.equal(isConversation('/news იაპონია'),false);
 });
-test('Manual unknown country uses Gemini grounded search and cannot silently fall back to unrelated RSS politics',async()=>{
+test('Any country searches public indexed publisher URLs, never Gemini paid Google grounding',async()=>{
   const {store}=await fixture();
   const c=config({...env(),AI_PROVIDER:'gemini',GEMINI_MODEL:'gemini-3.8-flash',
-    GEMINI_API_KEY:'test-key',DISCOVERY_MODE:'feeds'});
+    GEMINI_API_KEY:'test-key',DISCOVERY_MODE:'feeds',SOURCE_DOMAINS:'bbc.co.uk,theguardian.com,example.com'});
   const original=globalThis.fetch,requests=[];
   globalThis.fetch=async (url,init)=>{
     requests.push(String(url));
-    assert.match(String(url),/generativelanguage.googleapis.com/);
-    const body=JSON.parse(init.body);
-    assert.deepEqual(body.tools,[{google_search:{}}]);
-    assert.match(body.contents[0].parts[0].text,/ახალ ზელანდიაში პოლიტიკური/);
-    return Response.json({candidates:[{finishReason:'STOP',
-      content:{parts:[{text:'No grounded article about this topic'}]}}],usageMetadata:{promptTokenCount:12,candidatesTokenCount:9}});
+    if(String(url).includes('generativelanguage.googleapis.com')){
+      const body=JSON.parse(init.body);
+      assert.ok(!body.tools, 'Paid Gemini Search grounding must not be requested');
+      return Response.json({candidates:[{finishReason:'STOP',
+        content:{parts:[{text:'{"terms":"New Zealand government election"}'}]}}],
+        usageMetadata:{promptTokenCount:12,candidatesTokenCount:9}});
+    }
+    if(String(url).includes('api.gdeltproject.org')){
+      return Response.json({articles:[
+        {url:'https://www.bbc.co.uk/news/articles/unrelated-russia',title:'Russia sanctions policy',seendate:'20261017213000'},
+        {url:'https://www.bbc.co.uk/news/articles/new-zealand-politics',title:'New Zealand government election',seendate:'20261017212000'},
+      ]});
+    }
+    assert.match(String(url),/new-zealand-politics/);
+    return new Response('Publisher temporarily unavailable',{status:503});
   };
   try{
     await assert.rejects(generate(c,store,'ახალ ზელანდიაში პოლიტიკური პროცესები','STANDARD','night',null,true),
-      /Gemini returned no actual search evidence/);
-    assert.equal(requests.length,1);
-    assert.ok(requests.every(url=>!url.includes('feeds.bbci.co.uk')));
+      /No supported photo-backed political story|Source network failure|No suitable/);
+    assert.ok(requests.some(x=>x.includes('api.gdeltproject.org')));
+    assert.ok(requests.every(x=>!x.includes('unrelated-russia')));
     assert.equal((await store.stmt('SELECT count(*) AS n FROM cf_drafts').first()).n,0);
-  } finally {globalThis.fetch=original;}
+  }finally{globalThis.fetch=original;}
 });
 test('/ask speaks with Gemini directly and never queues or publishes a post',async()=>{
   const {e,store}=await fixture();
