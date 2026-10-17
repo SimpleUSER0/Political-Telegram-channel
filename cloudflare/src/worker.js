@@ -5,6 +5,7 @@ import {Store} from './store.js';
 import {checkSources, editDraft, fetchSource, generate, llm, sourceButtons} from './research.js';
 import {discoverFeeds} from './feeds.js';
 import {breakingCandidates,editionAtHour,localClock,REGULAR_QUERY} from './news-plan.js';
+import {parseMemberUpdate,saveMemberEvent,saveMemberCount,memberStatistics,memberAlert,memberReport} from './members.js';
 
 export class TelegramFailure extends Error {
   constructor(message, definitive=false) { super(message); this.definitive=definitive; }
@@ -61,10 +62,19 @@ export async function registerWebhook(c) {
   const bot=await verifyIdentity(c), channel=await verifyChannel(c);
   const url=publicUrl.origin+'/telegram/webhook';
   await telegram(c,'setWebhook',{url,secret_token:c.env.WEBHOOK_SECRET,
-    allowed_updates:['message','callback_query'],drop_pending_updates:false});
+    allowed_updates:['message','callback_query','chat_member'],drop_pending_updates:false});
   const info=await telegram(c,'getWebhookInfo',{});
-  if (info?.url!==url) throw new Halt('Telegram webhook URL verification failed');
-  return {registered:true,verified:true,bot:bot.username,channel:channel.username || String(channel.id),at:now()};
+  if (info?.url!==url || !info.allowed_updates?.includes('chat_member'))
+    throw new Halt('Telegram webhook membership updates were not registered');
+  return {registered:true,verified:true,subscriber_events:true,bot:bot.username,channel:channel.username || String(channel.id),at:now()};
+}
+async function liveChannelMembers(c,store) {
+  try {
+    const count=await telegram(c,'getChatMemberCount',{chat_id:c.channel});
+    if(!Number.isInteger(count) || count<0)return null;
+    await saveMemberCount(store,count);
+    return count;
+  }catch{return null;}
 }
 async function tell(c,text,reply_markup) {
   return telegram(c,'sendMessage',{chat_id:c.ownerChat,text:text.slice(0,4000),
@@ -148,6 +158,8 @@ export async function publish(c,store,draftId,version) {
 
 export function authorizedUpdate(update,c) {
   if (!Number.isSafeInteger(update?.update_id) || update.update_id<0) return null;
+  const membership=parseMemberUpdate(update,c);
+  if(membership)return {membership};
   const callback=update.callback_query;
   if (callback) {
     if (String(callback.from?.id)!==c.owner || String(callback.message?.chat?.id)!==c.ownerChat ||
@@ -162,6 +174,12 @@ export function authorizedUpdate(update,c) {
 }
 
 async function handleControl(c,store,payload,job) {
+  if (payload.membership) {
+    const event=payload.membership;
+    if(!await saveMemberEvent(store,event))return;
+    const count=await liveChannelMembers(c,store);
+    return tell(c,memberAlert(event,count));
+  }
   if (payload.callback) {
     const {id:callbackId,data}=payload.callback;
     // Acknowledgement is best effort and never controls whether publication succeeds.
@@ -182,9 +200,14 @@ async function handleControl(c,store,payload,job) {
   const text=payload.message?.text || '', [first,...lines]=text.split('\n');
   const [rawCommand,...args]=first.trim().split(/\s+/), command=rawCommand.split('@')[0];
   if (command==='/start' || command==='/help') return tell(c,
-    'მსოფლიო ფოკუსი — პოლიტიკური რედაქცია\n/news თემა — დამატებითი კვლევა\n/breaking თემა — დღის განსაკუთრებული ამბავი (მაქს. 1)\n/pending — მონახაზები\n/show ID — მონახაზი\n/status — სტატუსი\n/edit ID:VERSION — სათაური, ცარიელი ხაზი, ტექსტი\n\nდაგეგმილი მონახაზები: 09:00 / 13:00 / 18:00 / 21:00 (საქართველო). გამოქვეყნება მხოლოდ შენი Publish-ით.');
+    'მსოფლიო ფოკუსი — პოლიტიკური რედაქცია\n/news თემა — დამატებითი კვლევა\n/breaking თემა — დღის განსაკუთრებული ამბავი (მაქს. 1)\n/stats — გამომწერები და ზრდა\n/pending — მონახაზები\n/show ID — მონახაზი\n/status — სტატუსი\n/edit ID:VERSION — სათაური, ცარიელი ხაზი, ტექსტი\n\nდაგეგმილი მონახაზები: 09:00 / 13:00 / 18:00 / 21:00 (საქართველო). გამოქვეყნება მხოლოდ შენი Publish-ით.');
   if (command==='/status') return tell(c,JSON.stringify({provider:c.provider,model:c.model,research:c.research,publish:c.publish,schedule_hours_tbilisi:c.hours,
     missing:missing(c,true),...await store.status()},null,2));
+  if (command==='/stats' || command==='/subscribers') {
+    const count=await liveChannelMembers(c,store);
+    const stats=await memberStatistics(store);
+    return tell(c,memberReport(stats,count));
+  }
   if (command==='/pending') {
     const drafts=await store.pending();
     return tell(c,drafts.length?drafts.map(d=>`${d.id}:${d.version} · ${d.state}\n${d.topic}`).join('\n\n'):'მოლოდინში მონახაზი არ არის.');
@@ -247,6 +270,13 @@ export async function drain(c,store,kind,limit=1) {
           const sent=await notify(c,{...existing,state:'preview',payload:JSON.stringify(preview)});
           await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('style_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             JSON.stringify({at:now(),owner_message_id:sent.message_id,photo:Boolean(sent.photo?.length),source_buttons:1})).run();
+          await store.finish(job);continue;
+        }
+        if(payload.action==='check_members') {
+          const count=await liveChannelMembers(c,store);
+          if(count===null)throw new Halt('Telegram member count unavailable; check channel admin permissions');
+          await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('members_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            JSON.stringify({at:now(),count,available:true})).run();
           await store.finish(job);continue;
         }
         if(payload.action==='check_publishing') {
@@ -355,6 +385,10 @@ async function admin(request,url,c,store) {
     return json({error:'Unauthorized'},401);
   if (request.method==='GET' && url.pathname==='/admin/status')
     return json({provider:c.provider,model:c.model,missing:missing(c,true),research:c.research,publish:c.publish,...await store.status()});
+  if (request.method==='GET' && url.pathname==='/admin/stats') {
+    const count=await liveChannelMembers(c,store);
+    return json({subscriber_count:count,...await memberStatistics(store)});
+  }
   if (request.method==='GET' && url.pathname==='/admin/drafts') return json(await store.pending());
   const detail=/^\/admin\/drafts\/([a-f0-9]{20})$/.exec(url.pathname);
   if (request.method==='GET' && detail) {
