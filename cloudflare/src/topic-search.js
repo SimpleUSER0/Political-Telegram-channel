@@ -106,11 +106,16 @@ export async function bingTopicLookup(c,englishKeywords) {
   const results=[],seen=new Set();
   for(const match of xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)){
     const item=match[1],raw=rssField(item,'link'),headline=rssField(item,'title');
-    let direct=raw;
+    // Bing emits HTTP apiclick links with XML-escaped ampersands. Decode ONLY
+    // the fixed Bing redirect's named destination; never request Bing redirects
+    // or accept arbitrary URL hosts as publisher evidence.
+    let direct=raw.replaceAll('&amp;','&').replaceAll('&#38;','&');
     try{
-      const link=new URL(raw);
-      if(link.hostname==='www.bing.com'||link.hostname==='bing.com')
-        direct=link.searchParams.get('url')||link.searchParams.get('u')||'';
+      const link=new URL(direct);
+      if(['www.bing.com','bing.com'].includes(link.hostname)){
+        if(!/^\/news\/apiclick\.aspx$/i.test(link.pathname))continue;
+        direct=link.searchParams.get('url')||'';
+      }
     }catch{continue}
     let url;try{url=sourceUrl(direct,c.domains)}catch{continue}
     const when=Date.parse(rssField(item,'pubDate'));
