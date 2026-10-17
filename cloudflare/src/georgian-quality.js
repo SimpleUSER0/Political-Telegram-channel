@@ -52,7 +52,7 @@ export function requireGeorgianQuality(article) {
 
 // Examples are journalism-style demonstrations, not evidence to be copied.
 // Specific events are illustrative and MUST NOT be inserted into the real post.
-export const GEORGIAN_STYLE_EXAMPLES=String.raw\`NATIVE GEORGIAN JOURNALISM — POSITIVE STYLE EXAMPLES (fictional, do not copy facts):
+export const GEORGIAN_STYLE_EXAMPLES=String.raw`NATIVE GEORGIAN JOURNALISM — POSITIVE STYLE EXAMPLES (fictional, do not copy facts):
 BAD: "მასკირებული სელჩები დაარტყეს ევროპელი დიპლომატები დასავლეთ ბანკში"
 GOOD: "იორდანეს დასავლეთ სანაპიროზე ნიღბიანი პირები ევროპელ დიპლომატებს თავს დაესხნენ."
 BAD: "ბელგიის უცხო საქმეთა მინისტრი ამის შესახებ განაცხადა"
@@ -69,4 +69,4 @@ Use Georgian case endings (ვინ? რა გააკეთა? ვის? �
 locations. No lazy literal translation, filler, invented implications, repeated
 sentences, empty political commentary or nonsensical text. If only 1–2 supported
 facts exist, write ONLY those facts in brief natural Georgian. Fewer sentences is
-better than adding speculation to reach a length target.\`;
+better than adding speculation to reach a length target.`;
