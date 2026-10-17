@@ -2,6 +2,20 @@ import {Halt,validateJson} from './core.js';
 
 const MODEL='@cf/qwen/qwen3-30b-a3b-fp8';
 
+// The hosted model sometimes adds descriptive fields even in JSON mode.
+// Discard fields absent from the strictly defined schema, never infer missing
+// mandatory data or transform types; validateJson still enforces all constraints.
+export function projectSchemaFields(value,schema) {
+  if(Array.isArray(value) && schema?.type==='array')
+    return value.map(item=>projectSchemaFields(item,schema.items));
+  if(value && typeof value==='object' && !Array.isArray(value) && schema?.type==='object') {
+    const props=schema.properties||{};
+    return Object.fromEntries(Object.entries(value).filter(([key])=>Object.hasOwn(props,key))
+      .map(([key,item])=>[key,projectSchemaFields(item,props[key])]));
+  }
+  return value;
+}
+
 // Runs on the user's own Cloudflare Workers AI account. No Google egress,
 // third-party API key or paid-provider fallback is needed.
 export async function workersAICall(c,store,day,instruction,data,schema,search) {
@@ -39,5 +53,5 @@ export async function workersAICall(c,store,day,instruction,data,schema,search) 
     content:[{type:'output_text',text:response}]}]};
   let decoded;
   try {decoded=JSON.parse(response);}catch{throw new Halt('Cloudflare Workers AI JSON invalid');}
-  return validateJson(decoded,schema);
+  return validateJson(projectSchemaFields(decoded,schema),schema);
 }
