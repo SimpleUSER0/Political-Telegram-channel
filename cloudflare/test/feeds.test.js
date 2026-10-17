@@ -44,3 +44,25 @@ test('Georgian publisher feed dates remain tied to their own discovered articles
   assert.equal(feedPublication([entry],url,url).published_at,article.published_at);
   assert.equal(feedPublication([entry],url,'https://civil.ge/news/123456'),null);
 });
+
+
+test('China news asks regional publisher RSS rather than treating world crime as a political story',async()=>{
+  const c=config({SOURCE_DOMAINS:'bbc.co.uk,bbc.com,theguardian.com',DISCOVERY_MODE:'feeds',SOURCE_FEEDS:'bbc-world'});
+  const original=globalThis.fetch,visited=[];
+  globalThis.fetch=async url=>{
+    visited.push(String(url));
+    if(String(url).includes('/asia/'))return new Response('<rss><channel>'+
+      item('https://www.bbc.co.uk/news/articles/china-summit')+
+      '</channel></rss>',{headers:{'Content-Type':'application/rss+xml'}});
+    return new Response('<rss><channel>'+
+      item('https://www.bbc.co.uk/news/articles/world-story')+
+      '</channel></rss>',{headers:{'Content-Type':'application/rss+xml'}});
+  };
+  try {
+    const data=await discoverFeeds(c,'ჩინეთი');
+    assert.ok(visited.some(url=>url.includes('/asia/rss.xml')));
+    assert.ok(visited.some(url=>url.includes('/world/rss.xml')));
+    assert.ok(data.articles.some(article=>article.feed==='bbc-asia'));
+    assert.ok(data.articles.every(article=>article.url.startsWith('https://www.bbc.co.uk/')));
+  } finally {globalThis.fetch=original;}
+});
