@@ -38,8 +38,9 @@ export function geminiEndpoint(c,model,throughGateway=Boolean(c.env.GEMINI_GATEW
     throw new Halt('Gemini AI Gateway endpoint not approved');
   return u.origin+u.pathname.replace(/\/$/,'')+suffix;
 }
-export async function probeGemini(c,throughGateway=false) {
-  const model='gemini-3.8-flash';
+export async function probeGemini(c,throughGateway=false,model='gemini-3.8-flash') {
+  if(!['gemini-3.8-flash','gemini-3.5-flash-lite'].includes(model))
+    throw new Halt('Unapproved Gemini probe model');
   const url=geminiEndpoint(c,model,throughGateway);
   let response;
   try {
@@ -66,10 +67,19 @@ export async function geminiCall(c,store,day,instruction,data,schema,search) {
   if (schema) body.generationConfig.responseFormat={text:{mimeType:'APPLICATION_JSON',schema}};
   // Separate search and JSON calls work with Gemini 2.5; no search+schema combination.
   if (search) body.tools=[{google_search:{}}];
-  const response=await fetch(geminiEndpoint(c,c.model),{
+  const send=model=>fetch(geminiEndpoint(c,model),{
     method:'POST',headers:{'x-goog-api-key':c.env.GEMINI_API_KEY,'Content-Type':'application/json'},
     body:JSON.stringify(body),signal:AbortSignal.timeout(110000),
   });
+  let response=await send(c.model);
+  // Free Gemini Flash and Flash-Lite have separate model quotas. If primary
+  // Flash is exhausted, try one Google-hosted free Lite model; never paid tiers,
+  // external providers, recursive retries or an unbounded fallback chain.
+  if(response.status===429 && c.model==='gemini-3.8-flash' && !search) {
+    await response.body?.cancel();
+    await store.reserve('calls',c.dailyCalls);
+    response=await send('gemini-3.5-flash-lite');
+  }
   const raw=await readText(response,1000000);
   if (response.status===429) throw new Halt('Gemini free-tier quota reached (429); no paid-provider fallback');
   if (!response.ok) {

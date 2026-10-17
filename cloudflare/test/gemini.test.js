@@ -37,6 +37,35 @@ test('free-tier 429 stops after one attempt, with no OpenAI fallback',async()=>{
   try{await assert.rejects(llm(c,store,'Check',{},resultSchema),/quota reached/);assert.equal(calls,1);}
   finally{globalThis.fetch=original;}
 });
+test('Gemini 3.8 free-tier 429 gets one metered Google Flash-Lite fallback without a paid provider',async()=>{
+  const {store}=await fixture();
+  const c=config({... (await setup()).c.env,AI_PROVIDER:'gemini',GEMINI_MODEL:'gemini-3.8-flash',
+    GEMINI_API_KEY:'offline-only',MAX_DAILY_CALLS:'15'});
+  const original=globalThis.fetch,requested=[];
+  globalThis.fetch=async url=>{
+    requested.push(String(url));
+    if(String(url).includes('gemini-3.8-flash'))return Response.json({error:{}},{status:429});
+    assert.match(String(url),/gemini-3\.5-flash-lite/);
+    return Response.json({candidates:[{finishReason:'STOP',content:{parts:[{text:'{"passed":true}'}]}}],
+      usageMetadata:{promptTokenCount:11,candidatesTokenCount:7}});
+  };
+  try{
+    assert.deepEqual(await llm(c,store,'Check',{},resultSchema),{passed:true});
+    assert.deepEqual(requested.map(x=>x.match(/models\/(.*):generateContent/)?.[1]),
+      ['gemini-3.8-flash','gemini-3.5-flash-lite']);
+    assert.equal((await store.status()).usage.calls,2);
+  }finally{globalThis.fetch=original;}
+});
+test('Gemini primary and Lite quota exhaustion never calls a third provider',async()=>{
+  const {store}=await fixture(),c=config({... (await setup()).c.env,AI_PROVIDER:'gemini',
+    GEMINI_MODEL:'gemini-3.8-flash',GEMINI_API_KEY:'offline-only',MAX_DAILY_CALLS:'15'});
+  const original=globalThis.fetch;let calls=0;
+  globalThis.fetch=async()=>{calls++;return Response.json({error:{}},{status:429})};
+  try {
+    await assert.rejects(llm(c,store,'Check',{},resultSchema),/quota reached/);
+    assert.equal(calls,2);
+  }finally{globalThis.fetch=original;}
+});
 test('Google request errors identify malformed fields without exposing credentials or URLs',async()=>{
   const {c,store}=await setup(),original=globalThis.fetch;
   globalThis.fetch=async()=>Response.json({error:{status:'INVALID_ARGUMENT',
