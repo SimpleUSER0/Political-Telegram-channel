@@ -16,7 +16,7 @@ test('Any user topic is routed to a post or to Gemini conversation, with no coun
 test('Any country searches public indexed publisher URLs, never Gemini paid Google grounding',async()=>{
   const {store}=await fixture();
   const c=config({...env(),AI_PROVIDER:'gemini',GEMINI_MODEL:'gemini-3.8-flash',
-    GEMINI_API_KEY:'test-key',DISCOVERY_MODE:'feeds'});
+    GEMINI_API_KEY:'test-key',DISCOVERY_MODE:'feeds',SOURCE_DOMAINS:'bbc.co.uk,theguardian.com,example.com'});
   const original=globalThis.fetch,requests=[];
   globalThis.fetch=async (url,init)=>{
     requests.push(String(url));
