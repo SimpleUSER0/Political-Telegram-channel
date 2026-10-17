@@ -375,8 +375,8 @@ Use these publishers when possible; the strict URL allowlist is enforced separat
   const editorialCatalog=scopedEntries.map((entry,source_id)=>({...entry,source_id}));
   stage='candidate';
   const discovery = usingFeeds?{candidates:publisherCandidates(editorialCatalog,history,3,edition)}:
-    await llm(modelConfig,store,`Act as an editor selecting up to THREE different, consequential CURRENT POLITICAL stories.
-Follow the owner's /news topic strictly when specific; for a broad daily-news query prefer
+    await llm(modelConfig,store,`Select up to THREE credible, dated publisher stories CENTRAL to the owner's EXACT topic. For daily scheduled briefings select important political/geopolitical events.
+Follow the owner's /news or /post topic strictly when specific; for a broad daily-news query prefer
 elections, legislation, governments, diplomacy, security, wars, sanctions, protests and major
 policy decisions, including Georgian and international developments. Do NOT prioritize celebrity,
 health, lifestyle, sports, entertainment, or a leader's private affairs without political relevance.
