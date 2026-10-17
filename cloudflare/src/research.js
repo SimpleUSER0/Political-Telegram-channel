@@ -198,7 +198,7 @@ Return candidates=[] if evidence is inadequate. Never invent a URL or date.`,
         u.hash='';
         u.searchParams.delete('utm_source');u.searchParams.delete('utm_medium');
         u.searchParams.delete('utm_campaign');
-        byCanonical.set(u.href.replace(/\\/$/,''),a.url);
+        byCanonical.set(u.href.replace(/\/$/,''),a.url);
       } catch {}
     }
     selected.source_urls=selected.source_urls.map(raw=>{
@@ -208,7 +208,7 @@ Return candidates=[] if evidence is inadequate. Never invent a URL or date.`,
         u.hash='';
         u.searchParams.delete('utm_source');u.searchParams.delete('utm_medium');
         u.searchParams.delete('utm_campaign');
-        return byCanonical.get(u.href.replace(/\\/$/,'')) || raw;
+        return byCanonical.get(u.href.replace(/\/$/,'')) || raw;
       } catch {return raw;}
     });
   }
