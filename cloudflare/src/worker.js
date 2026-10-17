@@ -1,5 +1,5 @@
 import {Halt, articleText, config, equalSecret, id, json, missing, now, readText,
-  validateArticle, validatePacket,outputText} from './core.js';
+  validateArticle, validatePacket,outputText,retrievedUrls} from './core.js';
 import {ensureSchema} from './schema.js';
 import {Store} from './store.js';
 import {checkSources, editDraft, fetchSource, generate, llm, sourceButtons} from './research.js';
@@ -347,6 +347,18 @@ export async function drain(c,store,kind,limit=1) {
           const sent=await notify(c,{...existing,state:'preview',payload:JSON.stringify(preview)});
           await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('style_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             JSON.stringify({at:now(),owner_message_id:sent.message_id,photo:Boolean(sent.photo?.length),source_buttons:1})).run();
+          await store.finish(job);continue;
+        }
+        if(payload.action==='probe_any_topic_search') {
+          if(c.provider!=='gemini')throw new Halt('Gemini provider required');
+          const query=String(payload.query||'').trim();
+          if(query.length<3 || query.length>300)throw new Halt('Invalid test topic');
+          const search=await llm({...c,manualTopic:true},store,
+            'Search the open web for genuine, dated, relevant publisher articles DIRECTLY on the exact user topic. Never substitute unrelated political news. Use actual Google Search citations, not invented URLs.',
+            {query,now:new Date().toISOString()},null,true);
+          const urls=[...retrievedUrls(search,c.domains)].slice(0,12);
+          await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('generic_search_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            JSON.stringify({at:now(),query,urls,count:urls.length,success:urls.length>0})).run();
           await store.finish(job);continue;
         }
         if(payload.action==='check_gemini') {
