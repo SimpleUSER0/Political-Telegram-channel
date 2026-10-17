@@ -50,7 +50,7 @@ test('Guardian topic search uses publisher-owned dated URLs without relying on f
    ]}});
  };
  try {
-   const articles=await guardianTopicLookup({domains:['theguardian.com'],age:172800000},'Japan politics');
+   const articles=await guardianTopicLookup({domains:['theguardian.com'],age:172800000,env:{GUARDIAN_API_KEY:'test-local-key'}},'Japan politics');
    assert.equal(articles.length,1);
    assert.equal(articles[0].feed,'guardian-api');
    assert.ok(rankRequestedArticles(articles,'Japan politics').length===1);
