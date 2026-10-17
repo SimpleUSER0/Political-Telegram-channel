@@ -75,7 +75,7 @@ export async function geminiCall(c,store,day,instruction,data,schema,search) {
       if(typeof chunk.web?.uri!=='string') continue;
       try {urls.add(await resolveGroundingUrl(chunk.web.uri,c));} catch {}
     }
-    if(urls.size<2) throw new Halt('Gemini search has fewer than two allowed source URLs');
+    if(!urls.size) throw new Halt('Gemini search returned no allowed source URLs');
   }
   // Normalize the transport only; every downstream evidence/attribution check remains intact.
   return {status:'completed',provider:'gemini',grounding:meta || null,
