@@ -12,7 +12,7 @@ Write natural Georgian. Withhold when evidence is insufficient. Human approval i
 const s = {type:'string'}, integer = {type:'integer'}, bool = {type:'boolean'};
 const array = items => ({type:'array', items});
 const object = properties => ({type:'object', properties, required:Object.keys(properties), additionalProperties:false});
-const candidateSchema = object({event_key:s, topic:s, event_at:s, source_urls:array(s)});
+const candidateSchema = object({event_key:s, topic:s, event_at:s, source_ids:array(integer)});
 const verificationSchema = object({
   publishable:bool, reason:s, contradictions:array(s),
   sources:array(object({source_id:integer, published_at:{type:['string','null']}, origin_group:s,
@@ -135,6 +135,16 @@ export function requireDatedSources(sources,c,time=now()) {
   return dated.map((source,id)=>({...source,id}));
 }
 
+// The model chooses catalog IDs, never writes the URLs that will be fetched.
+// Preserve the admitted publisher URL byte-for-byte, including RSS parameters.
+export function selectDiscoveredSources(ids,catalog) {
+  if(!Array.isArray(ids) || ids.some(i=>!Number.isInteger(i) || i<0 || i>=catalog.length))
+    throw new Halt('Unknown discovered source ID');
+  const urls=[...new Set(ids.map(i=>catalog[i]))];
+  if(urls.length<2 || urls.length>6)throw new Halt('Select two to six discovered sources');
+  return urls;
+}
+
 export async function validateDraft(c,store,article,packet,sources) {
   validatePacket(packet,sources,c);
   validateArticle(article,packet,sources);
@@ -166,13 +176,20 @@ publication dates. Avoid all history events, including paraphrases. No suitable 
     {now:new Date().toISOString(),query,history},null,true);
   const allowed = retrievedUrls(search,c.domains);
   if (allowed.size<2) throw new Halt('Search returned insufficient admissible source URLs');
+  const catalog=[...allowed];
+  const catalogEntries=catalog.map((url,source_id)=>({
+    ...((search.articles || []).find(article=>article.url===url) || {}),source_id,url,
+  }));
   stage='candidate';
   const discovery = await llm(c,store,`Extract at most one candidate from the research.
-Use ONLY allowed_urls. event_key must identify the precise event and UTC date, in normalized English.
-Return candidates=[] if evidence is inadequate. Never invent a URL or date.`,
-    {now:new Date().toISOString(),query,history,research:outputText(search),allowed_urls:[...allowed]},object({candidates:array(candidateSchema)}));
+Choose 2-6 source_ids from the provided source_catalog covering the SAME event, from at least two
+independent publishers. Copy the integer IDs; do not write, reconstruct or canonicalize URLs.
+event_key must identify the precise event and UTC date, in normalized English.
+Return candidates=[] if evidence is inadequate. Never invent a source or date.`,
+    {now:new Date().toISOString(),query,history,research:outputText(search),source_catalog:catalogEntries},object({candidates:array(candidateSchema)}));
   if (!Array.isArray(discovery.candidates) || discovery.candidates.length!==1) throw new Halt('No suitable event');
-  const selected = discovery.candidates[0], eventTime=Date.parse(selected.event_at);
+  const {source_ids,...event}=discovery.candidates[0];
+  const selected={...event,source_urls:selectDiscoveredSources(source_ids,catalog)}, eventTime=Date.parse(selected.event_at);
   if (!selected.event_key?.trim() || selected.event_key.length<8 || selected.event_key.length>300 ||
       !selected.topic?.trim() || selected.topic.length>600 || !Number.isFinite(eventTime) ||
       eventTime<now()-c.age || eventTime>now()+600000) throw new Halt('Invalid or stale event');
@@ -184,36 +201,7 @@ Return candidates=[] if evidence is inadequate. Never invent a URL or date.`,
       {candidate:selected,history},object({same_event:bool}));
     if (comparison.same_event) throw new Halt('Duplicate underlying event');
   }
-  // Models can reformat feed URLs (tracking parameters, trailing slash, etc.).
-  // Select only the EXACT publisher-feed URLs already discovered; never follow
-  // a new model-generated URL. This avoids burning an entire run on harmless
-  // URL normalization differences without weakening the source allowlist.
-  if (c.discovery==='feeds') {
-    const feedArticles=search.articles || [];
-    const byExact=new Map(feedArticles.map(a=>[a.url,a.url]));
-    const byCanonical=new Map();
-    for(const a of feedArticles) {
-      try {
-        const u=new URL(a.url);
-        u.hash='';
-        u.searchParams.delete('utm_source');u.searchParams.delete('utm_medium');
-        u.searchParams.delete('utm_campaign');
-        byCanonical.set(u.href.replace(/\/$/,''),a.url);
-      } catch {}
-    }
-    selected.source_urls=selected.source_urls.map(raw=>{
-      if(byExact.has(raw))return raw;
-      try {
-        const u=new URL(raw);
-        u.hash='';
-        u.searchParams.delete('utm_source');u.searchParams.delete('utm_medium');
-        u.searchParams.delete('utm_campaign');
-        return byCanonical.get(u.href.replace(/\/$/,'')) || raw;
-      } catch {return raw;}
-    });
-  }
-  const urls = [...new Set(selected.source_urls.map(u=>sourceUrl(u,c.domains)))];
-  if (urls.length<2 || urls.length>6 || urls.some(u=>!allowed.has(u))) throw new Halt('Undiscovered source URL');
+  const urls=selected.source_urls;
   stage='source-fetch';
   const collected=[];
   for (const url of urls) {
