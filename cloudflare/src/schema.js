@@ -23,15 +23,16 @@ export const schema = [
     day TEXT PRIMARY KEY, runs INTEGER NOT NULL DEFAULT 0, calls INTEGER NOT NULL DEFAULT 0,
     input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
     searches INTEGER NOT NULL DEFAULT 0)`,
+  `CREATE TABLE IF NOT EXISTS cf_media (draft_id TEXT PRIMARY KEY, file_id TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS cf_slots (slot TEXT PRIMARY KEY, created_at INTEGER NOT NULL)`,
-  `INSERT OR IGNORE INTO cf_meta(key,value) VALUES ('schema_version','1')`,
+  `INSERT INTO cf_meta(key,value) VALUES ('schema_version','2') ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
 ];
 
 export async function ensureSchema(db) {
   try {
     const row = await db.prepare("SELECT value FROM cf_meta WHERE key='schema_version'").first();
-    if (row?.value === '1') return;
-    if (row) throw new Error('Unsupported D1 schema version');
+    if (row?.value === '2') return;
+    if (row && row.value!=='1') throw new Error('Unsupported D1 schema version');
   } catch (error) {
     if (!/no such table/i.test(String(error))) throw error;
   }

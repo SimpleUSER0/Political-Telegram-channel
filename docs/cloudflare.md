@@ -1,3 +1,24 @@
+# Current post format — 2026-10-17
+
+New posts match the Digital Era layout: publisher article photo, clear Georgian title,
+short paragraphs in a single photo caption, and exactly one `🔗 წყარო` button.
+Internal source records are retained. The primary source is the article providing the image.
+The owner previews the photo; its Telegram file ID is persisted and reused on publication.
+A photo-send timeout is never followed by a text fallback or automatic resend.
+Existing archived text posts are unchanged. New caption drafts target 950 UTF-16 units;
+edits over Telegram's 1024-unit photo caption limit are rejected without truncating text.
+If the selected articles have no supported publisher image, the run stops with a clear reason.
+
+Research uses three model requests in feed mode: event selection, publisher-source review,
+and Georgian drafting. A separate repeated AI fact-check is no longer made for new drafts.
+A credible publisher's claim can be reported with attribution without pretending it is
+independently proven. Unknown URLs, duplicate events and unsupported source references remain
+blocked. Editing still checks the changed text against the original source packet once.
+Schema v2 adds only a photo file-ID table; existing drafts and history are preserved.
+
+The sections below describe infrastructure and the earlier text-only pilot. Where they differ,
+the format and research flow above apply to the current Worker.
+
 # Cloudflare Workers: text-only pilot
 
 The reported failure happened **after** Python installation succeeded. `npx wrangler deploy`

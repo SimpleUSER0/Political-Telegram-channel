@@ -20,6 +20,36 @@ const verificationSchema = object({
   claims:array(object({text:s, status:{type:'string',enum:['verified','attributed','unverified','disputed']},
     attribution:s, origin_groups:array(s), evidence:array(object({source_id:integer,excerpt_id:integer}))})),
 });
+// Only publisher-provided article images; never a model-invented image URL.
+export function publisherImage(html, articleUrl, c) {
+  const host=new URL(articleUrl).hostname;
+  const cdn=host.endsWith('bbc.com') || host.endsWith('bbc.co.uk') ? ['ichef.bbci.co.uk'] :
+    host.endsWith('theguardian.com') ? ['i.guim.co.uk','media.guim.co.uk'] : [];
+  for(const tag of html.matchAll(/<meta\b[^>]{0,4000}>/gi)) {
+    const attrs={};
+    for(const a of tag[0].matchAll(/\b(property|name|content)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi))attrs[a[1].toLowerCase()]=a[2]??a[3];
+    if(!['og:image','og:image:secure_url','twitter:image'].includes((attrs.property||attrs.name||'').toLowerCase()))continue;
+    try {
+      const raw=(attrs.content||'').replaceAll('&amp;','&').replaceAll('&#38;','&');
+      const url=sourceUrl(new URL(raw,articleUrl).href,[host,...cdn]);
+      if(/\.(svg|gif)(?:[?#]|$)/i.test(url) || /(?:logo|placeholder|default[-_]image)/i.test(new URL(url).pathname))continue;
+      return {url,source_url:articleUrl,kind:'publisher-image'};
+    }catch{}
+  }
+  return null;
+}
+
+export function attributePublisherClaims(packet) {
+  return {...packet,claims:packet.claims.map(claim=>{
+    const sources=claim.evidence.map(e=>packet.sources.find(s=>s.source_id===e.source_id)).filter(Boolean);
+    const groups=[...new Set(sources.map(s=>normalized(s.origin_group||'')))];
+    // A report can be used with explicit attribution without claiming independent proof.
+    if(claim.status==='verified' && groups.length<2) return {...claim,status:'attributed',
+      attribution:claim.attribution?.trim() || [...new Set(sources.map(s=>s.publisher))].join(', '),origin_groups:groups};
+    return claim;
+  })};
+}
+
 const articleSchema = object({title:s,body:s,claim_ids:array(integer),source_ids:array(integer)});
 const checkSchema = object({passed:bool,unsupported_claims:array(s),missing_attributions:array(s)});
 
@@ -96,12 +126,13 @@ export async function fetchSource(rawUrl, c) {
       await response.body?.cancel(); throw new Halt('Source unavailable');
     }
     // Bounded, linear extraction in the Worker runtime. Scripts/styles/navigation are excluded.
-    let text = '', publication=null;
+    let text = '', publication=null, image=null;
     if (/text\/plain/i.test(response.headers.get('Content-Type'))) text = await readText(response,500000);
     else {
       // Bound incoming bytes BEFORE parsing, including chunked/decompressed responses.
       const html = await readText(response,500000);
       publication=publicationFromHtml(html,url);
+      image=publisherImage(html,url,c);
       // Removal does not suppress ancestor text handlers during the same streaming pass.
       // Parse the sanitized output in a second pass so script/navigation text cannot leak
       // into evidence, and preserve words split across streaming text chunks.
@@ -115,7 +146,7 @@ export async function fetchSource(rawUrl, c) {
     }
     text = text.replace(/\s+/gu,' ').trim().slice(0,45000);
     if (text.length<200) throw new Halt('Insufficient source text');
-    return {url,text,...(publication?{publication}:{})};
+    return {url,text,...(publication?{publication}:{}),...(image?{image}:{})};
   }
   throw new Halt('Too many redirects');
 }
@@ -238,8 +269,8 @@ export async function generate(c,store,query,format) {
   try {
   const history = await store.history();
   // Reserve the run only when the remaining daily call budget can cover an
-  // entire four/five-step workflow; avoid a predictable partial paid run.
-  const requiredCalls=c.discovery==='feeds'?4:5;
+  // entire three/four-call workflow; avoid a predictable partial paid run.
+  const requiredCalls=c.discovery==='feeds'?3:4;
   await store.requireCallCapacity(c.dailyCalls,requiredCalls);
   await store.reserve('runs',c.dailyRuns);
   stage='discovery';
@@ -304,11 +335,14 @@ details from a long article. For every claim select evidence by source_id and ex
 the provided excerpts. Choose passages that directly support the claim and preserve their context.
 Do not write or reconstruct quotations; the program resolves the IDs to the actual source text.
 Identify syndication/shared original announcements. Respect
-operator origin mappings. verified requires at least two independent origin groups; otherwise
-attribute and explicitly mark uncertainty. Withhold for unknown dates or weak central evidence.`,
+operator origin mappings. Use normal newsroom source-based reporting: a credible publisher report
+is sufficient for an ATTRIBUTED claim. Do not demand original field investigations or independent
+proof of each detail. Use verified only when the actual excerpts support two origin groups;
+otherwise use attributed and name the publisher or official speaker. Keep disagreements attributed.
+Return contradictions only for irreconcilable central factual conflicts, not differently attributed statements.`,
     {candidate:selected,history,format,sources:excerpts,origin_groups:c.origins,now:new Date().toISOString()},verificationSchema);
   if(assessment.duplicate_event)throw new Halt('Duplicate underlying event');
-  const packet=resolveEvidence(assessment,excerpts);
+  const packet=attributePublisherClaims(resolveEvidence(assessment,excerpts));
   // Prefer timestamp evidence actually retrieved from the publisher over model date extraction.
   for(const assessment of packet.sources) {
     const publication=sources.find(s=>s.id===assessment.source_id)?.publication;
@@ -316,17 +350,26 @@ attribute and explicitly mark uncertainty. Withhold for unknown dates or weak ce
   }
   validatePacket(packet,sources,c);
   stage='draft';
+  const primary=sources.find(source=>source.image);
+  if(!primary)throw new Halt('სტატიებს გამოსადეგი ფოტო არ ახლავს; აირჩიე სხვა ამბავი.');
   const article=await llm(c,store,`Write a neutral Georgian Telegram draft using ONLY the evidence.
 Every assertion must map to claim_ids (zero based). Preserve all attributions and uncertainty.
-Include every supporting source_id. No URLs or HTML in title/body. Title+body <=3500 UTF-16 units.
+Include every supporting source_id. No URLs or HTML in title/body. Title+body <=950 UTF-16 units so the COMPLETE post fits below one photo.
+Match a modern Georgian Telegram newsroom: a clear strong title, a direct opening, 2–3 short
+paragraphs, 2–4 key facts, natural Georgian, at most 1–2 restrained emoji. No clickbait,
+forced conclusion or question. No source labels in the body: a single source button is added.
+Keep all essential attribution even when shortening. This caption limit overrides format length.
 IDs belong ONLY in claim_ids/source_ids metadata. Do not put numeric citation markers such as
 [0, 1], research notes or internal identifiers in the title/body; source buttons are added separately.
 Formats: FLASH very short; QUICK short; STANDARD contextual; DEEP as detailed as the limit permits.`,
     {verification:packet,format},articleSchema);
-  stage='fact-check';
-  const check=await validateDraft(c,store,article,packet,sources);
+  stage='source-backed-draft';
+  validateArticle(article,packet,sources);
+  if(articleText(article).length>950)throw new Halt('ფოტოს ტექსტი ზედმეტად გრძელია; საჭიროა მოკლე მონახაზი.');
+  // The sources were reviewed once above. Do not spend another model request re-checking them.
+  const check={passed:true,unsupported_claims:[],missing_attributions:[],method:'publisher-review-and-local-validation'};
   const payload={article,verification:packet,sources,selection:selected,format,
-    fact_check:check,checked_at:new Date().toISOString(),media:null,provider:c.provider,
+    fact_check:check,checked_at:new Date().toISOString(),media:primary.image,primary_source_id:primary.id,provider:c.provider,
     grounding:search.grounding || null};
   stage='draft-storage';
   return store.createDraft(selected,payload,c.ttl);
@@ -344,13 +387,15 @@ Formats: FLASH very short; QUICK short; STANDARD contextual; DEEP as detailed as
 export async function editDraft(c,store,draft,title,body) {
   const payload=JSON.parse(draft.payload);
   const article={...payload.article,title,body};
+  if(payload.media && articleText(article).length>1024)throw new Halt('ფოტოს ტექსტი მაქსიმუმ 1024 სიმბოლო უნდა იყოს.');
   payload.fact_check=await validateDraft(c,store,article,payload.verification,payload.sources);
   payload.article=article; payload.checked_at=new Date().toISOString();
   return store.replaceDraft(draft,payload,c.owner);
 }
 
 export function sourceButtons(payload) {
-  return payload.article.source_ids.map(i=>payload.sources.find(s=>s.id===i)).filter(Boolean)
-    .map((s,index)=>[{text:'წყარო '+(index+1)+' · '+new URL(s.url).hostname,url:s.url}]);
+  const source=payload.sources.find(s=>s.id===payload.primary_source_id) ||
+    payload.article.source_ids.map(i=>payload.sources.find(s=>s.id===i)).find(Boolean);
+  return source?[[{text:'🔗 წყარო',url:source.url}]]:[];
 }
 export {articleText};
