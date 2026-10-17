@@ -29,6 +29,8 @@ test('resolved IDs pass the original evidence guard without trusting model-writt
   assert.equal(model.claims[0].evidence[0].excerpt,undefined);
   const altered=structuredClone(p.sources);altered[0].text='An unrelated report with no supporting quotation.';
   assert.throws(()=>validatePacket(result,altered,{age:3600000,origins:{}}),/quote not in retrieved source/);
+  assert.throws(()=>validatePacket({...result,duplicate_event:true},p.sources,{age:3600000,origins:{}}),/Duplicate underlying event/);
+  assert.throws(()=>validatePacket({...result,contradictions:['Sources disagree']},p.sources,{age:3600000,origins:{}}),/Conflicting evidence/);
 });
 test('unknown quote IDs and source IDs are withheld',()=>{
   const catalog=excerptCatalog(payload().sources);

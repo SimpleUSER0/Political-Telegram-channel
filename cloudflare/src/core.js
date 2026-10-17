@@ -160,6 +160,8 @@ export function validateArticle(a, packet, sources) {
   if (required.some(i => !a.source_ids.includes(i))) throw new Halt('Missing evidence source link');
 }
 export function validatePacket(packet, sources, c, time = now()) {
+  if(packet?.duplicate_event===true)throw new Halt('Duplicate underlying event');
+  if(packet?.contradictions?.length)throw new Halt('Conflicting evidence; draft withheld');
   if (!packet?.publishable || !packet.claims?.length || !Array.isArray(packet.sources))
     throw new Halt('Insufficient evidence; draft withheld');
   const assessments = new Map(packet.sources.map(s => [s.source_id, s]));

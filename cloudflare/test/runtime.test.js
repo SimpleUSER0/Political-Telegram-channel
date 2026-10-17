@@ -109,8 +109,10 @@ test('managed AI check uses one budgeted call, no research run and no Telegram m
   }finally{await runtime.dispose();}
 });
 
-for(const variant of ['openai','gemini','gemini-feeds']) {
+for(const variant of ['openai','gemini','gemini-feeds','gemini-feeds-fallback','gemini-feeds-history','gemini-feeds-duplicate']) {
 const provider=variant==='openai'?'openai':'gemini';
+const feedMode=variant.startsWith('gemini-feeds'),fallback=variant==='gemini-feeds-fallback';
+const withHistory=['gemini-feeds-history','gemini-feeds-duplicate'].includes(variant),duplicate=variant==='gemini-feeds-duplicate';
 test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval and single publication with mocked APIs',async()=>{
   let calls=0,sends=0;
   const p=payload(),time=new Date().toISOString();
@@ -120,14 +122,16 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
     WEBHOOK_SECRET:'w'.repeat(40),ADMIN_API_TOKEN:'a'.repeat(40),OPENAI_API_KEY:'test-only',
     OPENAI_MODEL:'test-only',SOURCE_DOMAINS:'example.com,example.org',
     AI_PROVIDER:provider,GEMINI_API_KEY:'gemini-test-only',GEMINI_MODEL:'gemini-2.5-flash',
-    DISCOVERY_MODE:variant==='gemini-feeds'?'feeds':'web_search',SOURCE_FEEDS:'bbc-world,guardian-world',
+    DISCOVERY_MODE:feedMode?'feeds':'web_search',SOURCE_FEEDS:'bbc-world,guardian-world',
     RESEARCH_ENABLED:'true',PUBLISH_ENABLED:'true',
   },async request=>{
     const url=new URL(request.url);
     if(['feeds.bbci.co.uk','www.theguardian.com'].includes(url.hostname))return new Response(
       '<rss><channel><item><title>A diplomatic meeting</title><pubDate>'+new Date().toUTCString()+
       '</pubDate><link>https://'+(url.hostname==='feeds.bbci.co.uk'?'example.com':'example.org')+
-      '/news</link><description>A recent independently reported meeting.</description></item></channel></rss>',
+      '/news</link><description>A recent independently reported meeting.</description></item>'+
+      (fallback && url.hostname==='feeds.bbci.co.uk'?'<item><title>A different event report</title><pubDate>'+
+        new Date().toUTCString()+'</pubDate><link>https://example.com/unavailable</link></item>':'')+'</channel></rss>',
       {headers:{'Content-Type':'application/rss+xml'}});
     if(['api.openai.com','generativelanguage.googleapis.com'].includes(url.hostname)) {
       const body=await request.json();
@@ -138,12 +142,19 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
       else {
         const properties=(body.text?.format.schema || body.generationConfig?.responseFormat.text.schema).properties;
         let data;
-        if(properties.candidates)data={candidates:[{event_key:'meeting-'+time,topic:'Meeting',event_at:time,
-          source_ids:[0,1]}]};
+        if(properties.candidates) {
+          const input=JSON.parse(body.input || body.contents[0].parts[0].text),catalog=input.source_catalog;
+          const first=catalog.find(x=>x.url==='https://example.com/news').source_id;
+          const second=catalog.find(x=>x.url==='https://example.org/news').source_id;
+          const selected={event_key:'meeting-'+time,topic:'Meeting',event_at:time,source_ids:[first,second]};
+          data={candidates:fallback?[{...selected,event_key:'unavailable-event-'+time,
+            source_ids:[catalog.find(x=>x.url.endsWith('/unavailable')).source_id,second]},selected]:[selected]};
+        }
         else if(properties.publishable) {
           const input=JSON.parse(body.input || body.contents[0].parts[0].text);
-          data={...p.verification,
-            sources:p.verification.sources.map(s=>({...s,...(variant==='gemini-feeds'?{published_at:null}:{})})),
+          if(withHistory)assert.equal(input.history[0].event_key,'prior-diplomatic-event');
+          data={...p.verification,duplicate_event:duplicate,
+            sources:p.verification.sources.map(s=>({...s,...(feedMode?{published_at:null}:{})})),
             claims:p.verification.claims.map(claim=>({...claim,evidence:claim.evidence.map(e=>({
               source_id:e.source_id,excerpt_id:input.sources.find(s=>s.id===e.source_id)
                 .excerpts.find(q=>q.text.includes(e.excerpt)).excerpt_id,
@@ -165,6 +176,7 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
       }
       return Response.json({...result,status:'completed',usage:{input_tokens:10,output_tokens:20}});
     }
+    if(url.pathname==='/unavailable')return new Response('',{status:403});
     if(['example.com','example.org'].includes(url.hostname))return new Response(
       '<html><head><meta property="article:published_time" content="'+time+'"></head><body><nav>UNTRUSTED NAVIGATION</nav><script>INJECTED SCRIPT</script><article>'+time+
       ' '+p.sources[0].text+' '+('The report provides context for the diplomatic meeting. '.repeat(8))+
@@ -189,25 +201,36 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
     }};`);
   try {
     assert.equal((await runtime.dispatchFetch('https://test/health')).status,200);
+    const db=await runtime.getD1Database('DB');
+    if(withHistory)await db.prepare("INSERT INTO cf_drafts(id,event_key,topic,payload,created_at,expires_at,updated_at,state) VALUES ('prior-event','prior-diplomatic-event','Prior diplomatic event',?,?,?,?, 'published')")
+      .bind(JSON.stringify(p),Date.now()-1000,Date.now()+3600000,Date.now()-1000).run();
     const queued=await runtime.dispatchFetch('https://test/admin/generate',{method:'POST',
       headers:{Authorization:'Bearer '+'a'.repeat(40)},body:JSON.stringify({query:'Diplomatic meeting'})});
     assert.equal(queued.status,202);
     await runtime.dispatchFetch('https://test/__test/drain');
-    const db=await runtime.getD1Database('DB');
-    const draft=await db.prepare('SELECT * FROM cf_drafts').first();
+    const draft=await db.prepare("SELECT * FROM cf_drafts WHERE id!='prior-event'").first();
     const jobs=await db.prepare('SELECT * FROM cf_jobs').all();
+    if(duplicate) {
+      assert.equal(draft,null);assert.equal(jobs.results[0].error,'Duplicate underlying event');
+      assert.equal(calls,2);assert.equal(sends,1);return;
+    }
     assert.ok(draft,JSON.stringify(jobs.results));assert.equal(draft.state,'pending');
     const evidence=JSON.parse(draft.payload).sources[0].text;
     assert.ok(evidence.includes(p.sources[0].text));
     assert.ok(!evidence.includes('INJECTED SCRIPT'));
     assert.ok(!evidence.includes('UNTRUSTED NAVIGATION'));
     assert.equal(JSON.parse(draft.payload).sources[0].publication.published_at,time);
-    assert.equal(calls,variant==='gemini-feeds'?4:5);assert.equal(sends,1); // Owner draft notification only.
-    if(variant==='gemini-feeds')assert.equal(JSON.parse(draft.payload).grounding.kind,'publisher-rss');
+    assert.equal(calls,feedMode?4:5);assert.equal(sends,1); // Owner draft notification only.
+    if(feedMode)assert.equal(JSON.parse(draft.payload).grounding.kind,'publisher-rss');
+    if(fallback) {
+      const diagnostic=JSON.parse((await db.prepare("SELECT value FROM cf_meta WHERE key='research_source_diagnostic'").first()).value);
+      assert.equal(diagnostic.attempts.length,2);
+      assert.equal(diagnostic.attempts[0].failures[0].error,'Source unavailable');
+    }
     assert.equal((await runtime.dispatchFetch('https://test/__test/publish?id='+draft.id)).status,200);
     assert.equal((await runtime.dispatchFetch('https://test/__test/publish?id='+draft.id)).status,409);
     assert.equal(sends,2); // One owner notification and exactly one channel post.
-    assert.equal((await db.prepare('SELECT state FROM cf_drafts').first()).state,'published');
+    assert.equal((await db.prepare('SELECT state FROM cf_drafts WHERE id=?').bind(draft.id).first()).state,'published');
   } finally {await runtime.dispose();}
 });
 }
