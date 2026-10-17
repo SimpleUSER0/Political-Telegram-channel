@@ -26,7 +26,7 @@ export function localClock(utcMs) {
 const GEORGIA=/საქართველ|თბილის|ქართულ|georgi(?:a|an)|tbilisi|ivanishvili|kobakhidze/iu;
 const CONFLICT=/\b(?:war|invasion|military|nato|troops|nuclear|defen[cs]e|security|airstrike|border|missile|taiwan|ceasefire|sanction|conflict|army|forces|geopolitic)\b|სამხედრო|უსაფრთხოებ|ომი|ომის |კონფლიქტ|თავდასხმ|ნატო|ოკუპაცი|ბირთვულ|ტაივან|სანქცი/iu;
 const DIPLOMACY=/\b(?:diplomac|diplomat|summit|negotiat|talks|agreement|treaty|tariff|trade|economic|eu commission|foreign minister|ambassador)\b|დიპლომატ|მოლაპარაკ|შეთანხმებ|სავაჭრო|ტარიფ|ეკონომიკ|ელჩ|სამიტ/iu;
-const HIGH_VALUE=/\b(?:approves?|passes?|announces?|resigns?|elected|election|launches?|imposes?|agrees?|signed|summit|sanctions?|declares?|negotiations|parliament|government|president|minister)\b|გადაწყვეტილებ|დაამტკიც|პრეზიდენტ|არჩევნ|მთავრობ|მინისტრ|პარლამენტ|შეთანხმებ|სანქცი/iu;
+const HIGH_VALUE=/\b(?:approves?|passes?|announces?|resigns?|elected|election|launches?|imposes?|agrees?|signed|summit|sanctions?|declares?|negotiations|parliament|government|president|minister|security|military|nato)\b|გადაწყვეტილებ|დაამტკიც|პრეზიდენტ|არჩევნ|მთავრობ|მინისტრ|პარლამენტ|შეთანხმებ|სანქცი/iu;
 
 export function newsroomBeat(entry) {
   const phrase=(entry.title||'')+' '+(entry.summary||'');
@@ -48,7 +48,7 @@ export function rankEditorialEntries(entries,edition='night',history=[],time=Dat
     const hours=Number.isFinite(published)?Math.max(0,(time-published)/3600000):48;
     const recency=Math.max(0,8-hours/4);
     const value=HIGH_VALUE.test((entry.title||'')+' '+(entry.summary||''))?2:0;
-    const slot=plan.beat===beat?1.8:0;
+    const slot=plan.beat===beat?2.2:0;
     const underserved=Math.max(0,(TARGETS[beat]-(counts[beat]/Math.max(1,recent.length))))*4;
     return recency+value+slot+underserved+(entry.has_publisher_image?0.2:0);
   }
