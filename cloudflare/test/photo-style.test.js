@@ -33,7 +33,7 @@ test('v1 schema upgrades without deleting old records',async()=>{
   const db=new D1Local();await db.prepare('CREATE TABLE cf_meta(key TEXT PRIMARY KEY,value TEXT)').run();
   await db.prepare("INSERT INTO cf_meta VALUES ('schema_version','1')").run();
   await ensureSchema(db);await ensureSchema(db);
-  assert.equal((await db.prepare("SELECT value FROM cf_meta WHERE key='schema_version'").first()).value,'2');
+  assert.equal((await db.prepare("SELECT value FROM cf_meta WHERE key='schema_version'").first()).value,'3');
   await db.prepare("INSERT INTO cf_media VALUES ('draft','file')").run();
 });
 for(const unknown of [false,true])test('photo preview and publication preserve one image and never resend: '+unknown,async()=>{
