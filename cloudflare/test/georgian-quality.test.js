@@ -20,7 +20,7 @@ test('allow concise, meaningful Georgian news and unchanged verified claim IDs',
     claim_ids:[0,1],source_ids:[0]};
   assert.deepEqual(georgianQualityIssues(good),[]);
   assert.strictEqual(requireGeorgianQuality(good),good);
-  assert.match(GEORGIAN_STYLE_EXAMPLES,/ბრიტანეთის/);
+  assert.match(GEORGIAN_STYLE_EXAMPLES,/დიდმა ბრიტანეთმა/);
 });
 test('reject English-only, very long titles and known machine calques',()=>{
   assert.ok(georgianQualityIssues({title:'News',body:'The minister announced diplomatic talks with foreign leaders during the parliamentary session in the country.'}).includes('georgian-language-share'));
