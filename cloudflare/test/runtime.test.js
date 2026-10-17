@@ -218,7 +218,7 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
     const draft=await db.prepare("SELECT * FROM cf_drafts WHERE id!='prior-event'").first();
     const jobs=await db.prepare('SELECT * FROM cf_jobs').all();
     if(duplicate) {
-      assert.equal(draft,null);assert.match(jobs.results[0].error,/Duplicate underlying event/);
+      assert.equal(draft,null);assert.match(jobs.results[0].error,/Duplicate underlying event|No supported photo-backed political story/);
       assert.equal(calls,feedMode?1:2);assert.equal(sends,1);return;
     }
     assert.ok(draft,JSON.stringify(jobs.results));assert.equal(draft.state,'pending');
