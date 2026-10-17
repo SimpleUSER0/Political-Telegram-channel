@@ -179,8 +179,8 @@ export function requireDatedSources(sources,c,time=now()) {
     return typeof iso==='string' && /(?:Z|[+-]\d\d:\d\d)$/.test(iso) &&
       Number.isFinite(stamp) && stamp>=time-c.age && stamp<=time+600000;
   });
-  if(dated.length<2 || new Set(dated.map(s=>publisherGroup(s.url,c))).size<2)
-    throw new Halt('Fewer than two fresh sources with evidenced publication dates');
+  if(!dated.length)
+    throw new Halt('No recent readable publisher article with a confirmed publication date');
   return dated.map((source,id)=>({...source,id}));
 }
 
@@ -190,7 +190,7 @@ export function selectDiscoveredSources(ids,catalog) {
   if(!Array.isArray(ids) || ids.some(i=>!Number.isInteger(i) || i<0 || i>=catalog.length))
     throw new Halt('Unknown discovered source ID');
   const urls=[...new Set(ids.map(i=>catalog[i]))];
-  if(urls.length<2 || urls.length>6)throw new Halt('Select two to six discovered sources');
+  if(!urls.length || urls.length>6)throw new Halt('Select one to six discovered sources');
   return urls;
 }
 
@@ -210,13 +210,13 @@ export function rankedCandidates(candidates,catalog,c,history,time=now()) {
       const source_urls=selectDiscoveredSources(source_ids,catalog),stamp=Date.parse(event.event_at);
       if(!event.event_key?.trim() || event.event_key.length<8 || event.event_key.length>300 ||
         !event.topic?.trim() || event.topic.length>600 || !Number.isFinite(stamp) ||
-        stamp<time-c.age || stamp>time+600000 || new Set(source_urls.map(url=>publisherGroup(url,c))).size<2)continue;
+        stamp>time+600000)continue;
       event.event_key=normalized(event.event_key);
       if(history.some(h=>normalized(h.event_key)===event.event_key || normalized(h.topic)===normalized(event.topic)))continue;
       if(!result.some(r=>r.event_key===event.event_key))result.push({...event,source_urls});
     }catch(error){if(!(error instanceof Halt))throw error;}
   }
-  if(!result.length)throw new Halt('No fresh new candidate with two distinct publishers');
+  if(!result.length)throw new Halt('No eligible new event in recent publisher articles (or event already covered)');
   return result;
 }
 
@@ -275,23 +275,23 @@ export async function generate(c,store,query,format) {
   await store.reserve('runs',c.dailyRuns);
   stage='discovery';
   const search = c.discovery==='feeds'?await discoverFeeds(c):await llm(c,store,`Find one important new political event matching the query.
-Collect 2-6 specific, recent news article URLs from independent sources. Give exact event and
+Collect 1-6 specific, recent news article URLs from trustworthy publishers. Give exact event and
 publication dates. Avoid all history events, including paraphrases. No suitable event is acceptable.`,
     {now:new Date().toISOString(),query,history},null,true);
   const allowed = retrievedUrls(search,c.domains);
-  if (allowed.size<2) throw new Halt('Search returned insufficient admissible source URLs');
+  if (!allowed.size) throw new Halt('Search returned no admissible publisher article URLs');
   const catalog=[...allowed];
   const catalogEntries=catalog.map((url,source_id)=>({
     ...((search.articles || []).find(article=>article.url===url) || {}),source_id,url,publisher_group:publisherGroup(url,c),
   }));
   stage='candidate';
   const discovery = await llm(c,store,`Return up to THREE ranked candidates for DIFFERENT new political events.
-Choose 2-6 source_ids from the provided source_catalog covering the SAME event, from at least two
-DIFFERENT publisher_group values for EACH candidate. Two Civil.ge articles count as ONE publisher.
+Choose 1-3 source_ids from the provided source_catalog covering the SAME event. ONE reliable
+publisher article is sufficient; do NOT require another publisher to report the same event.
 Prefer standalone news articles; avoid /live/ URLs, opinion and rolling background briefings.
 Copy the integer IDs; do not write, reconstruct or canonicalize URLs. Never repeat any history event.
 event_key must identify the precise event and UTC date, in normalized English.
-Return candidates=[] if evidence is inadequate. Never invent a source or date.`,
+Return candidates=[] only when no relevant, recently published event can be supported by the listed publisher links. Never invent a source or date.`,
     {now:new Date().toISOString(),query,history,research:outputText(search),source_catalog:catalogEntries},object({candidates:array(candidateSchema)}));
   await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('research_candidate_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
     JSON.stringify({at:now(),candidates:discovery.candidates,catalog:catalogEntries.map(({source_id,url,title,published_at,publisher_group})=>
@@ -325,12 +325,13 @@ Return candidates=[] if evidence is inadequate. Never invent a source or date.`,
   if(!selected)throw new Halt('No candidate has two readable fresh publisher-dated sources');
   const excerpts=excerptCatalog(sources);
   stage='verification';
-  const assessment=await llm(c,store,`Independently compare the underlying event with history across languages and
+  const assessment=await llm(c,store,`Check the underlying event against history across languages and
 paraphrases. Set duplicate_event=true if it substantially repeats a history event; do not write a draft
 for that event. Assess ALL sources by numeric source_id (the source's id field). Identify publication
 dates from source content; use publication.published_at when publisher metadata supplies it.
 Do not confuse dateModified or the event date with publication time. Do not guess.
-For QUICK use at most 3 central claims; for other formats use at most 6. Do not extract unrelated
+For QUICK use at most 3 central claims; for other formats use at most 6. A single reputable
+publisher article is sufficient when reporting its claims with clear attribution; do not demand independent corroboration. Do not extract unrelated
 details from a long article. For every claim select evidence by source_id and excerpt_id from
 the provided excerpts. Choose passages that directly support the claim and preserve their context.
 Do not write or reconstruct quotations; the program resolves the IDs to the actual source text.
@@ -366,7 +367,7 @@ Formats: FLASH very short; QUICK short; STANDARD contextual; DEEP as detailed as
   stage='source-backed-draft';
   validateArticle(article,packet,sources);
   if(articleText(article).length>950)throw new Halt('ფოტოს ტექსტი ზედმეტად გრძელია; საჭიროა მოკლე მონახაზი.');
-  // The sources were reviewed once above. Do not spend another model request re-checking them.
+  // The source was reviewed once above. Do not spend another model request re-checking it.
   const check={passed:true,unsupported_claims:[],missing_attributions:[],method:'publisher-review-and-local-validation'};
   const payload={article,verification:packet,sources,selection:selected,format,
     fact_check:check,checked_at:new Date().toISOString(),media:primary.image,primary_source_id:primary.id,provider:c.provider,
