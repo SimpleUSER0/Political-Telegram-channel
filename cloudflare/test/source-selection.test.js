@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {publisherGroup,publisherCandidates,rankedCandidates,selectDiscoveredSources} from '../src/research.js';
+import {publisherGroup,publisherCandidates,rankedCandidates,selectDiscoveredSources,publisherImage} from '../src/research.js';
 
 const catalog=[
   'https://www.bbc.co.uk/news/articles/a?at_medium=RSS&at_campaign=rss',
@@ -58,4 +58,18 @@ test('RSS candidates use only genuine publisher title, date and source ID',()=>{
   assert.match(result[0].event_key,/^rss_[a-z0-9]+_2026-10-17$/);
   const same=publisherCandidates(sources,[{event_key:result[0].event_key}]);
   assert.deepEqual(same.map(e=>e.topic),[sources[0].title]);
+});
+
+test('AP photo is accepted only from publisher-owned image CDN, not arbitrary image links',()=>{
+ const url='https://apnews.com/article/japan-takaichi-politics';
+ const c={domains:['apnews.com','bbc.co.uk']};
+ const html='<meta property="og:image" content="https://dims.apnews.com/dims4/default/crop/1000x750/image.jpg">';
+ assert.deepEqual(publisherImage(html,url,c),{
+   url:'https://dims.apnews.com/dims4/default/crop/1000x750/image.jpg',
+   source_url:url,kind:'publisher-image'});
+ const fake='<meta property="og:image" content="https://images.attacker.example.com/fake.jpg">';
+ assert.equal(publisherImage(fake,url,c),null);
+ const jt='https://www.japantimes.co.jp/news/2026/10/17/japan/politics/report/';
+ const image='<meta property="og:image" content="https://cdn-japantimes.com/photos/2026/10/japan.jpg">';
+ assert.equal(publisherImage(image,jt,c)?.kind,'publisher-image');
 });

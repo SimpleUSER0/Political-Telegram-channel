@@ -35,7 +35,9 @@ const verificationSchema = object({
 export function publisherImage(html, articleUrl, c) {
   const host=new URL(articleUrl).hostname;
   const cdn=host.endsWith('bbc.com') || host.endsWith('bbc.co.uk') ? ['ichef.bbci.co.uk'] :
-    host.endsWith('theguardian.com') ? ['i.guim.co.uk','media.guim.co.uk'] : [];
+    host.endsWith('theguardian.com') ? ['i.guim.co.uk','media.guim.co.uk'] :
+    host.endsWith('apnews.com') ? ['dims.apnews.com'] :
+    host.endsWith('japantimes.co.jp') ? ['cdn-japantimes.com','cdn.japantimes.co.jp'] : [];
   for(const tag of html.matchAll(/<meta\b[^>]{0,4000}>/gi)) {
     const attrs={};
     for(const a of tag[0].matchAll(/\b(property|name|content)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi))attrs[a[1].toLowerCase()]=a[2]??a[3];
