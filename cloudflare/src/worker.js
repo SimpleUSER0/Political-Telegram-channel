@@ -7,6 +7,7 @@ import {discoverFeeds} from './feeds.js';
 import {breakingCandidates,editionAtHour,localClock,REGULAR_QUERY} from './news-plan.js';
 import {parseMemberUpdate,saveMemberEvent,saveMemberCount,memberStatistics,memberAlert,memberReport} from './members.js';
 import {requireGeorgianQuality} from './georgian-quality.js';
+import {lookupRequestedArticles} from './topic-search.js';
 import {probeGemini} from './gemini.js';
 
 export class TelegramFailure extends Error {
@@ -350,15 +351,13 @@ export async function drain(c,store,kind,limit=1) {
           await store.finish(job);continue;
         }
         if(payload.action==='probe_any_topic_search') {
-          if(c.provider!=='gemini')throw new Halt('Gemini provider required');
           const query=String(payload.query||'').trim();
-          if(query.length<3 || query.length>300)throw new Halt('Invalid test topic');
-          const search=await llm({...c,manualTopic:true},store,
-            'Search the open web for genuine, dated, relevant publisher articles DIRECTLY on the exact user topic. Never substitute unrelated political news. Use actual Google Search citations, not invented URLs.',
-            {query,now:new Date().toISOString()},null,true);
-          const urls=[...retrievedUrls(search,c.domains)].slice(0,12);
+          if(query.length<3 || query.length>120)throw new Halt('Invalid test topic');
+          // No Gemini request or research run is consumed by this connectivity test.
+          const result=await lookupRequestedArticles(c,query);
+          const urls=result.articles.slice(0,12).map(a=>a.url);
           await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('generic_search_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            JSON.stringify({at:now(),query,urls,count:urls.length,success:urls.length>0})).run();
+            JSON.stringify({at:now(),query,provider:result.provider,urls,count:result.articles.length,success:urls.length>0})).run();
           await store.finish(job);continue;
         }
         if(payload.action==='check_gemini') {
