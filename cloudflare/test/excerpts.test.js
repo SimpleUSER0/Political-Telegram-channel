@@ -18,6 +18,15 @@ test('excerpt catalog contains only bounded verbatim passages and preserves publ
     assert.ok(normalized(text).includes(normalized(quote.text)));
   }
 });
+test('long publisher text is reduced to a few relevant verbatim passages',()=>{
+  const text='Routine local coverage about unrelated events. '.repeat(180)+
+    'The diplomatic negotiation produced a new sanctions agreement on Friday. '+
+    'More unrelated filler on a second topic. '.repeat(140);
+  const [packet]=excerptCatalog([{id:0,url:'https://example.com/news',text}], 'diplomatic negotiation sanctions');
+  assert.ok(packet.excerpts.length<=18);
+  assert.ok(packet.excerpts.some(e=>e.text.includes('diplomatic negotiation')));
+  assert.ok(packet.excerpts.every(e=>normalized(text).includes(normalized(e.text))));
+});
 test('resolved IDs pass the original evidence guard without trusting model-written quotations',()=>{
   const p=payload(),catalog=excerptCatalog(p.sources);
   const model={...p.verification,claims:p.verification.claims.map(claim=>({...claim,

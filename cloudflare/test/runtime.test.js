@@ -109,9 +109,10 @@ test('managed AI check uses one budgeted call, no research run and no Telegram m
   }finally{await runtime.dispose();}
 });
 
-for(const variant of ['openai','gemini','gemini-feeds','gemini-feeds-fallback','gemini-feeds-history','gemini-feeds-duplicate']) {
+for(const variant of ['openai','gemini','gemini-feeds','gemini-feeds-fallback','gemini-feeds-photo-fallback','gemini-feeds-history','gemini-feeds-duplicate']) {
 const provider=variant==='openai'?'openai':'gemini';
-const feedMode=variant.startsWith('gemini-feeds'),fallback=variant==='gemini-feeds-fallback';
+const feedMode=variant.startsWith('gemini-feeds'),fallback=variant==='gemini-feeds-fallback',
+  photoFallback=variant==='gemini-feeds-photo-fallback';
 const withHistory=['gemini-feeds-history','gemini-feeds-duplicate'].includes(variant),duplicate=variant==='gemini-feeds-duplicate';
 test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval and single publication with mocked APIs',async()=>{
   let calls=0,sends=0;
@@ -148,20 +149,25 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
           const second=catalog.find(x=>x.url==='https://example.org/news').source_id;
           const selected={event_key:'meeting-'+time,topic:'Meeting',event_at:time,source_ids:[first,second]};
           data={candidates:fallback?[{...selected,event_key:'unavailable-event-'+time,
-            source_ids:[catalog.find(x=>x.url.endsWith('/unavailable')).source_id]},selected]:[selected]};
+            source_ids:[catalog.find(x=>x.url.endsWith('/unavailable')).source_id]},selected]:
+            photoFallback?[{...selected,event_key:'missing-photo-'+time,source_ids:[second]},
+              {...selected,source_ids:[first]}]:[selected]};
         }
         else if(properties.publishable) {
           const input=JSON.parse(body.input || body.contents[0].parts[0].text);
           if(withHistory)assert.equal(input.history[0].event_key,'prior-diplomatic-event');
+          // Model can mislabel the publisher; the Worker corrects it from the actual URL.
           data={...p.verification,duplicate_event:duplicate,
-            sources:p.verification.sources.map(s=>({...s,...(feedMode?{published_at:null}:{})})),
-            claims:p.verification.claims.map(claim=>({...claim,evidence:claim.evidence.map(e=>({
-              source_id:e.source_id,excerpt_id:input.sources.find(s=>s.id===e.source_id)
-                .excerpts.find(q=>q.text.includes(e.excerpt)).excerpt_id,
-            }))})),
+            sources:[{...p.verification.sources[0],origin_group:'wrong-ai-group',
+              ...(feedMode?{published_at:null}:{})}],
+            claims:p.verification.claims.map(claim=>({...claim,status:'verified',
+              origin_groups:['wrong-ai-group'],evidence:[{
+                source_id:0,excerpt_id:input.sources[0].excerpts
+                  .find(q=>q.text.includes(claim.evidence[0].excerpt)).excerpt_id,
+              }]})),
           };
         }
-        else if(properties.title)data=p.article;
+        else if(properties.title)data={...p.article,source_ids:[0]};
         else if(properties.passed)data=p.fact_check;
         else throw new Error('Unexpected mock model call');
         result={output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(data)}]}]};
@@ -212,7 +218,7 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
     const draft=await db.prepare("SELECT * FROM cf_drafts WHERE id!='prior-event'").first();
     const jobs=await db.prepare('SELECT * FROM cf_jobs').all();
     if(duplicate) {
-      assert.equal(draft,null);assert.equal(jobs.results[0].error,'Duplicate underlying event');
+      assert.equal(draft,null);assert.match(jobs.results[0].error,/Duplicate underlying event/);
       assert.equal(calls,2);assert.equal(sends,1);return;
     }
     assert.ok(draft,JSON.stringify(jobs.results));assert.equal(draft.state,'pending');
@@ -223,10 +229,11 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
     assert.equal(JSON.parse(draft.payload).sources[0].publication.published_at,time);
     assert.equal(calls,feedMode?3:4);assert.equal(sends,1); // Owner draft notification only.
     if(feedMode)assert.equal(JSON.parse(draft.payload).grounding.kind,'publisher-rss');
-    if(fallback) {
+    if(fallback || photoFallback) {
       const diagnostic=JSON.parse((await db.prepare("SELECT value FROM cf_meta WHERE key='research_source_diagnostic'").first()).value);
       assert.equal(diagnostic.attempts.length,2);
-      assert.equal(diagnostic.attempts[0].failures[0].error,'Source unavailable');
+      if(fallback)assert.equal(diagnostic.attempts[0].failures[0].error,'Source unavailable');
+      if(photoFallback)assert.equal(diagnostic.attempts[0].rejected,'No usable publisher photo');
     }
     assert.equal((await runtime.dispatchFetch('https://test/__test/publish?id='+draft.id)).status,200);
     assert.equal((await runtime.dispatchFetch('https://test/__test/publish?id='+draft.id)).status,409);

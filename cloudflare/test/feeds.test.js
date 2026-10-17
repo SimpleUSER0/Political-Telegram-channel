@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {config} from '../src/core.js';
-import {discoverFeeds,feedPublication,parseFeed} from '../src/feeds.js';
+import {discoverFeeds,feedImage,feedPublication,parseFeed} from '../src/feeds.js';
 
 const settings=()=>config({SOURCE_DOMAINS:'bbc.co.uk,theguardian.com,civil.ge',DISCOVERY_MODE:'feeds'});
 const item=(url,date=new Date().toUTCString())=>`<item><title><![CDATA[Meeting &amp; diplomacy]]></title><link>${url}</link><pubDate>${date}</pubDate><description>&lt;b&gt;Context&lt;/b&gt;</description></item>`;
@@ -24,6 +24,18 @@ test('feed mode is an explicit configuration choice and rejects unknown feed tar
   assert.equal(config({}).discovery,'web_search');
   assert.throws(()=>config({DISCOVERY_MODE:'feeds',SOURCE_FEEDS:'bbc-world,internal-metadata'}),/known publisher feed/);
   assert.deepEqual(config({DISCOVERY_MODE:'feeds',SOURCE_FEEDS:'bbc-world'}).feeds,['bbc-world']);
+});
+test('real photo metadata from the original publisher feed is accepted safely',()=>{
+  const c=settings(),article='https://www.bbc.co.uk/news/articles/abc';
+  const xml='<rss><item><title>Diplomatic agreement</title><link>'+article+'</link><pubDate>'+
+    new Date().toUTCString()+'</pubDate><media:thumbnail url="https://ichef.bbci.co.uk/images/report.jpg" /></item></rss>';
+  const [entry]=parseFeed(xml,c,'bbc-world');
+  const linked={...entry,feed:'bbc-world',feed_url:'https://feeds.bbci.co.uk/news/world/rss.xml'};
+  assert.equal(entry.image.kind,'publisher-feed-image');
+  assert.equal(feedImage([linked],article,article).url,'https://ichef.bbci.co.uk/images/report.jpg');
+  assert.equal(feedImage([linked],article,'https://civil.ge/archives/1'),null);
+  const bad=xml.replace('ichef.bbci.co.uk','evil.example');
+  assert.equal(parseFeed(bad,c,'bbc-world')[0].image,undefined);
 });
 test('Georgian publisher feed dates remain tied to their own discovered articles',()=>{
   const c=config({SOURCE_DOMAINS:'civil.ge,netgazeti.ge',DISCOVERY_MODE:'feeds',SOURCE_FEEDS:'civil-ge,netgazeti'});

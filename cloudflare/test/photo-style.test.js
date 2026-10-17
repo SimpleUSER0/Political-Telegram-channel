@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {publisherImage,sourceButtons,attributePublisherClaims} from '../src/research.js';
+import {publisherImage,sourceButtons,attributePublisherClaims,normalizePublisherEvidence} from '../src/research.js';
 import {notify,publish} from '../src/worker.js';
 import {ensureSchema} from '../src/schema.js';
 import {fixture,payload,mockTelegram,D1Local} from './helpers.js';
@@ -20,6 +20,14 @@ test('one publisher report is attributed rather than falsely independently verif
   const p=payload();p.verification.claims[0].evidence=p.verification.claims[0].evidence.slice(0,1);
   const reviewed=attributePublisherClaims(p.verification);
   assert.equal(reviewed.claims[0].status,'attributed');assert.equal(reviewed.claims[0].attribution,'Example A');
+});
+test('incorrect model publisher groups are corrected from trusted source URLs',()=>{
+  const p=payload(),assessment=structuredClone(p.verification);
+  assessment.sources[0].origin_group='made-up';
+  assessment.claims[0].origin_groups=['made-up','b'];
+  const fixed=normalizePublisherEvidence(assessment,p.sources,{domains:['example.com','example.org'],origins:{}});
+  assert.deepEqual(fixed.sources.map(s=>s.origin_group),['example.com','example.org']);
+  assert.deepEqual(fixed.claims[0].origin_groups,['example.com','example.org']);
 });
 test('v1 schema upgrades without deleting old records',async()=>{
   const db=new D1Local();await db.prepare('CREATE TABLE cf_meta(key TEXT PRIMARY KEY,value TEXT)').run();
