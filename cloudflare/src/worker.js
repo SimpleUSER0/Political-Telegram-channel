@@ -7,6 +7,7 @@ import {discoverFeeds} from './feeds.js';
 import {breakingCandidates,editionAtHour,localClock,REGULAR_QUERY} from './news-plan.js';
 import {parseMemberUpdate,saveMemberEvent,saveMemberCount,memberStatistics,memberAlert,memberReport} from './members.js';
 import {requireGeorgianQuality} from './georgian-quality.js';
+import {probeGemini} from './gemini.js';
 
 export class TelegramFailure extends Error {
   constructor(message, definitive=false) { super(message); this.definitive=definitive; }
@@ -308,6 +309,15 @@ export async function drain(c,store,kind,limit=1) {
           const sent=await notify(c,{...existing,state:'preview',payload:JSON.stringify(preview)});
           await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('style_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             JSON.stringify({at:now(),owner_message_id:sent.message_id,photo:Boolean(sent.photo?.length),source_buttons:1})).run();
+          await store.finish(job);continue;
+        }
+        if(payload.action==='check_gemini') {
+          if(!c.env.GEMINI_API_KEY)throw new Halt('Existing Gemini API key missing');
+          const direct=await probeGemini(c,false);
+          const gateway=await probeGemini(c,true);
+          const diagnosis={at:now(),model:'gemini-3.8-flash',direct,gateway};
+          await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('gemini_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            JSON.stringify(diagnosis)).run();
           await store.finish(job);continue;
         }
         if(payload.action==='check_members') {

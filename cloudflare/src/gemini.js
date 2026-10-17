@@ -24,6 +24,38 @@ export async function resolveGroundingUrl(raw,c) {
   throw new Halt('Grounding redirect limit reached');
 }
 
+// The configured BYOK gateway belongs to this account and is not an
+// arbitrary user-supplied proxy. Cloudflare AI Gateway uses the real Gemini key.
+export function geminiEndpoint(c,model,throughGateway=Boolean(c.env.GEMINI_GATEWAY_BASE_URL)) {
+  const suffix='/v1beta/models/'+model+':generateContent';
+  if(!throughGateway)return 'https://generativelanguage.googleapis.com'+suffix;
+  const base=String(c.env.GEMINI_GATEWAY_BASE_URL||'');
+  let u;
+  try{u=new URL(base);}catch{throw new Halt('Gemini AI Gateway base URL invalid');}
+  if(u.protocol!=='https:' || u.hostname!=='gateway.ai.cloudflare.com' ||
+      u.username || u.password || u.search || u.hash ||
+      !/^\/v1\/[a-f0-9]{32}\/world-focus-gemini\/google-ai-studio\/?$/.test(u.pathname))
+    throw new Halt('Gemini AI Gateway endpoint not approved');
+  return u.origin+u.pathname.replace(/\/$/,'')+suffix;
+}
+export async function probeGemini(c,throughGateway=false) {
+  const model='gemini-3.8-flash';
+  const url=geminiEndpoint(c,model,throughGateway);
+  let response;
+  try {
+    response=await fetch(url,{method:'POST',headers:{'x-goog-api-key':c.env.GEMINI_API_KEY,
+      'Content-Type':'application/json'},body:JSON.stringify({
+      contents:[{parts:[{text:'Reply with exactly the Georgian word: გამარჯობა'}]}],
+      generationConfig:{maxOutputTokens:140,temperature:0}}),signal:AbortSignal.timeout(20000)});
+    const packet=await readText(response,15000);
+    let parsed={};try{parsed=JSON.parse(packet)}catch{}
+    const text=(parsed.candidates?.[0]?.content?.parts||[]).map(p=>p.text||'').join('').trim();
+    return {gateway:throughGateway,http:response.status,success:response.ok&&Boolean(text),
+      text:response.ok?text.slice(0,80):'',googleStatus:parsed.error?.status||null,
+      googleError:response.ok?null:String(parsed.error?.message||'').slice(0,120)};
+  }catch(e){return {gateway:throughGateway,success:false,error:String(e?.message||'Network error').slice(0,100)};}
+}
+
 export async function geminiCall(c,store,day,instruction,data,schema,search) {
   if (!/^gemini-[a-zA-Z0-9.\-]+$/.test(c.model)) throw new Halt('Invalid GEMINI_MODEL');
   const body={systemInstruction:{parts:[{text:instruction+(search?
@@ -34,7 +66,7 @@ export async function geminiCall(c,store,day,instruction,data,schema,search) {
   if (schema) body.generationConfig.responseFormat={text:{mimeType:'APPLICATION_JSON',schema}};
   // Separate search and JSON calls work with Gemini 2.5; no search+schema combination.
   if (search) body.tools=[{google_search:{}}];
-  const response=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+c.model+':generateContent',{
+  const response=await fetch(geminiEndpoint(c,c.model),{
     method:'POST',headers:{'x-goog-api-key':c.env.GEMINI_API_KEY,'Content-Type':'application/json'},
     body:JSON.stringify(body),signal:AbortSignal.timeout(110000),
   });

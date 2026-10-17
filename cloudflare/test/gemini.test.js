@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {config,missing,retrievedUrls,validateJson} from '../src/core.js';
 import {llm} from '../src/research.js';
-import {resolveGroundingUrl} from '../src/gemini.js';
+import {resolveGroundingUrl,geminiEndpoint} from '../src/gemini.js';
 import {fixture} from './helpers.js';
 
 const resultSchema={type:'object',properties:{passed:{type:'boolean'}},required:['passed'],additionalProperties:false};
@@ -80,4 +80,14 @@ test('only exact Google grounding redirects can resolve outside the allowlist',a
 });
 test('provider JSON cannot smuggle unknown fields, wrong types or omitted fields',()=>{
   for(const value of [{passed:'true'},{passed:true,publish:true},{}])assert.throws(()=>validateJson(value,resultSchema));
+});
+
+test('Gemini BYOK gateway URL allows only the exact account gateway, never arbitrary proxies',()=>{
+  const c={env:{GEMINI_GATEWAY_BASE_URL:'https://gateway.ai.cloudflare.com/v1/0123456789abcdef0123456789abcdef/world-focus-gemini/google-ai-studio'}};
+  assert.equal(geminiEndpoint(c,'gemini-3.8-flash'),c.env.GEMINI_GATEWAY_BASE_URL+'/v1beta/models/gemini-3.8-flash:generateContent');
+  assert.equal(geminiEndpoint(c,'gemini-3.8-flash',false),'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent');
+  for(const bad of ['https://evil.example.com/v1/0123456789abcdef0123456789abcdef/world-focus-gemini/google-ai-studio',
+    'https://gateway.ai.cloudflare.com/v1/0123456789abcdef0123456789abcdef/untrusted/google-ai-studio']){
+      assert.throws(()=>geminiEndpoint({env:{GEMINI_GATEWAY_BASE_URL:bad}},'gemini-3.8-flash'),/not approved/);
+  }
 });

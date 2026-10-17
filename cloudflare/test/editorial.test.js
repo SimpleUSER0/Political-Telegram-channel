@@ -7,6 +7,9 @@ import {env,fixture} from './helpers.js';
 
 test('World Focus interprets country requests as POLITICAL scope, not any country news',()=>{
   assert.equal(editorialTopic('ჩინეთი').id,'china');
+  assert.equal(editorialTopic('პოსტი იაპონიაზე').id,'japan');
+  assert.equal(editorialTopic('პოსტი იაპონიის პოლიტიკაზე').id,'japan');
+  assert.equal(editorialTopic('/post Japan politics').id,'japan');
   assert.equal(editorialTopic('China political situation').id,'china');
   assert.equal(editorialTopic('აშშ').id,'usa');
   assert.equal(editorialTopic('საქართველო').id,'georgia');
@@ -15,6 +18,7 @@ test('World Focus interprets country requests as POLITICAL scope, not any countr
   assert.equal(editorialTopic('მსოფლიოს ახალი ამბები'),null);
 });
 test('topic-specific RSS expands publishers rather than replacing global or Georgian feeds',()=>{
+  assert.deepEqual(editorialFeeds('იაპონიაზე',['bbc-world']),['bbc-world','bbc-asia','guardian-japan']);
   assert.deepEqual(editorialFeeds('ჩინეთი',['bbc-world','civil-ge']),
     ['bbc-world','civil-ge','bbc-asia','guardian-china']);
   assert.deepEqual(editorialFeeds('აშშ',['bbc-world']),['bbc-world','guardian-us-politics']);
@@ -83,4 +87,20 @@ test('common Georgian machine-translation calques are corrected without changing
   assert.deepEqual(changed.claim_ids,[0]);
   assert.deepEqual(changed.source_ids,[0]);
   assert.equal(original.title,'ბრიტანიის მიერ ჩინული ელექტრომანქანების საკითხი');
+});
+
+test('Japan political request never silently returns unrelated political news',()=>{
+  const unrelated=[
+    {title:'US president announces new election policy',summary:'Important international decision'},
+    {title:'China foreign minister holds talks with Russia',summary:'A regional security summit'},
+    {title:'US security council meets, mentions Japan in closing remarks',summary:'Japan was briefly mentioned'},
+    {title:'Ukraine military says talks with NATO continue',summary:'Japan discussed as an ally'},
+  ];
+  assert.deepEqual(editorialCandidates(unrelated,'პოსტი იაპონიაზე'),[]);
+  const relevant=[
+    {title:'Japan parliament approves new government policy',summary:'Tokyo cabinet approves proposal'},
+    {title:'Tokyo government and Washington agree new trade policy',summary:'Japan security review'},
+    {title:'Japanese prime minister meets EU leaders in Tokyo',summary:'Diplomacy'},
+  ];
+  assert.deepEqual(editorialCandidates(relevant,'პოსტი იაპონიის პოლიტიკაზე'),relevant);
 });
