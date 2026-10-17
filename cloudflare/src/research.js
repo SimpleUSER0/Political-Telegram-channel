@@ -4,6 +4,7 @@ import {geminiCall} from './gemini.js';
 import {workersAICall} from './workers-ai.js';
 import {discoverFeeds,feedImage,feedPublication} from './feeds.js';
 import {editorialCandidates,polishGeorgianArticle} from './editorial.js';
+import {GEORGIAN_STYLE_EXAMPLES,georgianQualityIssues,requireGeorgianQuality} from './georgian-quality.js';
 import {editionDetails,rankEditorialEntries} from './news-plan.js';
 
 const EDITORIAL = `You are the independent Georgian-language WORLD FOCUS political newsroom.
@@ -459,9 +460,13 @@ factual contradictions, unsupported assertions, or repetition without material n
       }
       validatePacket(packet,sources,c);
       stage='draft';
-      const generatedArticle=await llm(c,store,`Write a natural, precise Georgian political Telegram post based EXCLUSIVELY on the
+      const generatedArticle=await llm(c,store,`${GEORGIAN_STYLE_EXAMPLES}\n\nWrite a natural, precise Georgian political Telegram post based EXCLUSIVELY on the
 evidence packet. Strong informative headline, direct news lead, 2-3 short coherent paragraphs;
 2-4 useful facts explaining what happened, who is involved and why it matters.
+Prefer 1-3 very short clear Georgian sentences over 3 paragraphs of filler.
+If a name or place cannot be expressed grammatically, retain its original spelling.
+NEVER paraphrase without real information. NEVER repeat a sentence. Use natural Georgian
+word order, correct subject and object case, and no made-up geopolitical conclusions.
 Keep political claims explicitly attributed to the publisher or official speaker. Treat
 disagreements and allegations neutrally. Do not write opinion or generic predictions.
 Avoid robotic phrasing, repeated background, melodrama, clickbait, concluding questions
@@ -482,9 +487,35 @@ Aim for 600-900 UTF-16 units in STANDARD when evidence permits, never exceeding 
 For evening, add helpful direct context; for breaking, state only confirmed new facts.
 Do not append metadata, pseudo-citations or numbered IDs.`,
         {verification:packet,format,edition,edition_targets:editionDetails(edition)},articleSchema);
-      const article=polishGeorgianArticle(generatedArticle);
+      let article=polishGeorgianArticle(generatedArticle);
       stage='source-backed-draft';
       validateArticle(article,packet,sources);
+      let grammarIssues=georgianQualityIssues(article);
+      if(grammarIssues.length){
+        // Additional editor pass only if clearly broken Georgian was detected.
+        // Keep the verified evidence packet as the ground truth, not the bad wording.
+        await store.requireCallCapacity(c.dailyCalls,1);
+        stage='georgian-revision';
+        const revised=await llm(c,store,`${GEORGIAN_STYLE_EXAMPLES}
+
+You are the final Georgian copy editor. The first draft FAILED due to malformed
+Georgian or repeated phrases. Do NOT copy its broken grammar, and never copy
+facts from these illustrative examples. Reconstruct a NEW, concise, idiomatic
+Georgian title and at most TWO short paragraphs from the VERIFIED evidence packet.
+Keep all names/dates exactly as evidenced. No unsupported political consequence.
+The original claim_ids and source_ids must stay unchanged.
+Do not introduce a new person, place, date, quote, motive or allegation.
+Do not pad word counts. Output ONLY the required JSON object.`,
+          {evidence:packet,original:article,issues:grammarIssues,format},articleSchema);
+        if(JSON.stringify(revised.claim_ids)!==JSON.stringify(article.claim_ids) ||
+           JSON.stringify(revised.source_ids)!==JSON.stringify(article.source_ids))
+          throw new Halt('ქართული ტექსტის ხარისხის შემოწმება ვერ გაიარა (source-ids-changed)');
+        article=polishGeorgianArticle(revised);
+        stage='source-backed-draft';
+        validateArticle(article,packet,sources);
+        grammarIssues=georgianQualityIssues(article);
+      }
+      requireGeorgianQuality(article);
       if(articleText(article).length>950)throw new Halt('Draft exceeds the photo caption limit');
       const check={passed:true,unsupported_claims:[],missing_attributions:[],method:'publisher-review-and-local-validation'};
       const payload={article,verification:packet,sources,selection:candidate,format,edition,
@@ -495,7 +526,7 @@ Do not append metadata, pseudo-citations or numbered IDs.`,
     } catch(error) {
       // Try the next article on editorial evidence failures, not on provider outages,
       // quota exhaustion or unexpected runtime failures. No unbounded AI retries.
-      const editorial=error instanceof Halt && /^(Duplicate underlying event|Conflicting evidence|Insufficient evidence|Incomplete source assessment|Unknown or stale source publication date|Source publication date conflicts|Source origin mapping conflict|Invalid claim|Evidence quote not in retrieved source|Inconsistent evidence origins|Independent corroboration missing|Attribution missing|Unknown source excerpt ID|Invalid article|Missing evidence source link|Unknown article claim|Unknown article source|Draft exceeds the photo caption limit|Source contains no citable excerpts)/.test(error.message);
+      const editorial=error instanceof Halt && /^(Duplicate underlying event|Conflicting evidence|Insufficient evidence|Incomplete source assessment|Unknown or stale source publication date|Source publication date conflicts|Source origin mapping conflict|Invalid claim|Evidence quote not in retrieved source|Inconsistent evidence origins|Independent corroboration missing|Attribution missing|Unknown source excerpt ID|Invalid article|Missing evidence source link|Unknown article claim|Unknown article source|Draft exceeds the photo caption limit|Source contains no citable excerpts|ქართული ტექსტის ხარისხის შემოწმება ვერ გაიარა)/.test(error.message);
       if(!editorial)throw error;
       attempt.rejected=error.message;
       lastEditorialError=error.message;
