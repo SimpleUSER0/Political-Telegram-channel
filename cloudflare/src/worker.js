@@ -388,6 +388,13 @@ export async function drain(c,store,kind,limit=1) {
             JSON.stringify({at:now(),query,provider:result.provider,urls,count:result.articles.length,success:urls.length>0})).run();
           await store.finish(job);continue;
         }
+        if(payload.action==='check_gemini_lite') {
+          if(!c.env.GEMINI_API_KEY)throw new Halt('Existing Gemini API key missing');
+          const result=await probeGemini(c,false,'gemini-3.5-flash-lite');
+          await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('gemini_lite_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            JSON.stringify({at:now(),model:'gemini-3.5-flash-lite',...result})).run();
+          await store.finish(job);continue;
+        }
         if(payload.action==='check_gemini') {
           if(!c.env.GEMINI_API_KEY)throw new Halt('Existing Gemini API key missing');
           const direct=await probeGemini(c,false);
