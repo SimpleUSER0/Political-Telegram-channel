@@ -139,7 +139,7 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
         const properties=(body.text?.format.schema || body.generationConfig?.responseFormat.text.schema).properties;
         let data;
         if(properties.candidates)data={candidates:[{event_key:'meeting-'+time,topic:'Meeting',event_at:time,
-          source_urls:['https://example.com/news','https://example.org/news']}]};
+          source_ids:[0,1]}]};
         else if(properties.publishable)data=variant==='gemini-feeds'
           ?{...p.verification,sources:p.verification.sources.map(s=>({...s,published_at:null}))}:p.verification;
         else if(properties.title)data=p.article;
