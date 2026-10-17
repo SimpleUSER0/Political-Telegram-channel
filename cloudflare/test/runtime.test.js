@@ -109,9 +109,10 @@ test('managed AI check uses one budgeted call, no research run and no Telegram m
   }finally{await runtime.dispose();}
 });
 
-for(const variant of ['openai','gemini','gemini-feeds','gemini-feeds-fallback','gemini-feeds-history','gemini-feeds-duplicate']) {
+for(const variant of ['openai','gemini','gemini-feeds','gemini-feeds-fallback','gemini-feeds-photo-fallback','gemini-feeds-history','gemini-feeds-duplicate']) {
 const provider=variant==='openai'?'openai':'gemini';
-const feedMode=variant.startsWith('gemini-feeds'),fallback=variant==='gemini-feeds-fallback';
+const feedMode=variant.startsWith('gemini-feeds'),fallback=variant==='gemini-feeds-fallback',
+  photoFallback=variant==='gemini-feeds-photo-fallback';
 const withHistory=['gemini-feeds-history','gemini-feeds-duplicate'].includes(variant),duplicate=variant==='gemini-feeds-duplicate';
 test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval and single publication with mocked APIs',async()=>{
   let calls=0,sends=0;
@@ -148,7 +149,9 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
           const second=catalog.find(x=>x.url==='https://example.org/news').source_id;
           const selected={event_key:'meeting-'+time,topic:'Meeting',event_at:time,source_ids:[first,second]};
           data={candidates:fallback?[{...selected,event_key:'unavailable-event-'+time,
-            source_ids:[catalog.find(x=>x.url.endsWith('/unavailable')).source_id]},selected]:[selected]};
+            source_ids:[catalog.find(x=>x.url.endsWith('/unavailable')).source_id]},selected]:
+            photoFallback?[{...selected,event_key:'missing-photo-'+time,source_ids:[second]},
+              {...selected,source_ids:[first]}]:[selected]};
         }
         else if(properties.publishable) {
           const input=JSON.parse(body.input || body.contents[0].parts[0].text);
@@ -226,10 +229,11 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
     assert.equal(JSON.parse(draft.payload).sources[0].publication.published_at,time);
     assert.equal(calls,feedMode?3:4);assert.equal(sends,1); // Owner draft notification only.
     if(feedMode)assert.equal(JSON.parse(draft.payload).grounding.kind,'publisher-rss');
-    if(fallback) {
+    if(fallback || photoFallback) {
       const diagnostic=JSON.parse((await db.prepare("SELECT value FROM cf_meta WHERE key='research_source_diagnostic'").first()).value);
       assert.equal(diagnostic.attempts.length,2);
-      assert.equal(diagnostic.attempts[0].failures[0].error,'Source unavailable');
+      if(fallback)assert.equal(diagnostic.attempts[0].failures[0].error,'Source unavailable');
+      if(photoFallback)assert.equal(diagnostic.attempts[0].rejected,'No usable publisher photo');
     }
     assert.equal((await runtime.dispatchFetch('https://test/__test/publish?id='+draft.id)).status,200);
     assert.equal((await runtime.dispatchFetch('https://test/__test/publish?id='+draft.id)).status,409);
