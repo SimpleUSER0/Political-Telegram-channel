@@ -6,7 +6,7 @@ import {payload} from './helpers.js';
 
 function modules(extraMain) {
   const result={};
-  for(const name of ['worker','core','store','schema','research','gemini','feeds'])result[name+'.js']={
+  for(const name of ['worker','core','store','schema','research','gemini','feeds','editorial'])result[name+'.js']={
     type:'esm',contents:readFileSync(new URL('../src/'+name+'.js',import.meta.url),'utf8'),
   };
   if(extraMain)result['harness.js']={type:'esm',contents:extraMain};
