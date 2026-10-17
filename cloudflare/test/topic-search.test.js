@@ -76,3 +76,22 @@ test('Bing topic news requires original publisher links, discards search-engine 
    assert.equal(articles[0].url,'https://www.bbc.co.uk/news/articles/japan-policy');
  }finally{globalThis.fetch=original}
 });
+
+test('Owner-requested seven-day sources include recent real publisher stories excluded from breaking-news window',async()=>{
+ const original=globalThis.fetch,day=new Date(Date.now()-72*3600000).toUTCString();
+ globalThis.fetch=async()=>{
+   const target='https://apnews.com/article/japan-takaichi-politics';
+   const redirect='http://www.bing.com/news/apiclick.aspx?ref=FexRss&amp;url='+encodeURIComponent(target)+'&amp;c=123';
+   return new Response('<rss><channel><item><title>Japan cabinet policy announcement</title>'+
+     '<link>'+redirect+'</link><pubDate>'+day+'</pubDate></item></channel></rss>',
+     {headers:{'Content-Type':'application/rss+xml'}});
+ };
+ try {
+   const base={domains:['apnews.com'],age:48*3600000};
+   const old=await bingTopicLookup(base,'Japan cabinet policy');
+   assert.equal(old.length,0);
+   const week=await bingTopicLookup({...base,age:168*3600000},'Japan cabinet policy');
+   assert.equal(week.length,1);
+   assert.equal(week[0].url,'https://apnews.com/article/japan-takaichi-politics');
+ }finally{globalThis.fetch=original;}
+});
