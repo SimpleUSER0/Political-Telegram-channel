@@ -18,7 +18,7 @@ const verificationSchema = object({
   sources:array(object({source_id:integer, published_at:{type:['string','null']}, origin_group:s,
     publisher:s, kind:{type:'string',enum:['primary','independent','syndicated','unknown']}})),
   claims:array(object({text:s, status:{type:'string',enum:['verified','attributed','unverified','disputed']},
-    attribution:s, origin_groups:array(s), evidence:array(object({source_id:integer,excerpt:s}))})),
+    attribution:s, origin_groups:array(s), evidence:array(object({source_id:integer,excerpt_id:integer}))})),
 });
 const articleSchema = object({title:s,body:s,claim_ids:array(integer),source_ids:array(integer)});
 const checkSchema = object({passed:bool,unsupported_claims:array(s),missing_attributions:array(s)});
@@ -120,6 +120,24 @@ export async function fetchSource(rawUrl, c) {
   throw new Halt('Too many redirects');
 }
 
+export async function checkSources(c) {
+  const discovery=await discoverFeeds(c),results=[];
+  for(const feed of c.feeds) {
+    const article=discovery.articles.find(a=>a.feed===feed);
+    if(!article)continue;
+    try {
+      const source=await fetchSource(article.url,c);
+      source.publication ||= feedPublication(discovery.articles,article.url,source.url);
+      results.push({feed,title:article.title,url:article.url,final_url:source.url,
+        text_length:source.text.length,publication:source.publication || null});
+    }catch(error) {
+      results.push({feed,title:article.title,url:article.url,
+        error:error instanceof Halt?error.message:'Source network failure'});
+    }
+  }
+  return {at:now(),results};
+}
+
 // Reject undated or stale sources BEFORE spending a model call on verification.
 // A feed date is only admitted when the article and the final redirect belong to
 // the publisher. No date is invented and no source verification check is bypassed.
@@ -143,6 +161,35 @@ export function selectDiscoveredSources(ids,catalog) {
   const urls=[...new Set(ids.map(i=>catalog[i]))];
   if(urls.length<2 || urls.length>6)throw new Halt('Select two to six discovered sources');
   return urls;
+}
+
+export function excerptCatalog(sources) {
+  return sources.map(({text,...source})=>{
+    const excerpts=[],canonical=normalized(text);
+    // Bound quotes before the model sees them. Every entry is an exact contiguous
+    // passage of retrieved text; splitting on sentence boundaries retains context.
+    for(const sentence of text.split(/(?<=[.!?])\s+/u)) {
+      const words=sentence.trim().split(/\s+/u);
+      for(let start=0;start<words.length;start+=25) {
+        const quote=words.slice(start,start+25).join(' ');
+        if(quote.length>=20 && canonical.includes(normalized(quote)))
+          excerpts.push({excerpt_id:excerpts.length,text:quote});
+      }
+    }
+    if(!excerpts.length)throw new Halt('Source contains no citable excerpts');
+    return {...source,excerpts};
+  });
+}
+
+export function resolveEvidence(packet,catalog) {
+  return {...packet,claims:packet.claims.map(claim=>({...claim,
+    evidence:claim.evidence.map(({source_id,excerpt_id})=>{
+      const source=catalog.find(s=>s.id===source_id);
+      if(!source || !Number.isInteger(excerpt_id) || excerpt_id<0 || !source.excerpts[excerpt_id])
+        throw new Halt('Unknown source excerpt ID');
+      return {source_id,excerpt:source.excerpts[excerpt_id].text};
+    }),
+  }))};
 }
 
 export async function validateDraft(c,store,article,packet,sources) {
@@ -203,7 +250,10 @@ Return candidates=[] if evidence is inadequate. Never invent a source or date.`,
   }
   const urls=selected.source_urls;
   stage='source-fetch';
+  await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('research_source_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    JSON.stringify({at:now(),selection:selected})).run();
   const collected=[];
+  const failures=[];
   for (const url of urls) {
     try {
       const source=await fetchSource(url,c);
@@ -213,21 +263,29 @@ Return candidates=[] if evidence is inadequate. Never invent a source or date.`,
       }
       if (!collected.some(s=>s.url===source.url)) collected.push(source);
     } catch (error) {
+      failures.push({url,error:error instanceof Halt?error.message:'Source network failure'});
       // Do not replace failed sources with model memory or bypass publisher restrictions.
       if (!(error instanceof Halt) && error?.name!=='TimeoutError') console.warn('Source fetch unavailable');
     }
   }
+  await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('research_source_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    JSON.stringify({at:now(),selection:selected,failures,
+      sources:collected.map(({url,publication,text})=>({url,publication,text_length:text.length}))})).run();
   const sources=requireDatedSources(collected,c);
+  const excerpts=excerptCatalog(sources);
   stage='verification';
-  const packet=await llm(c,store,`Assess ALL sources by numeric source_id. Identify publication
+  const assessment=await llm(c,store,`Assess ALL sources by numeric source_id (the source's id field). Identify publication
 dates from source content; use publication.published_at when publisher metadata supplies it.
 Do not confuse dateModified or the event date with publication time. Do not guess.
 For QUICK use at most 3 central claims; for other formats use at most 6. Do not extract unrelated
-details from a long article. Record each selected material claim with exact short quotes, each
-20+ characters and at most 25 words. Identify syndication/shared original announcements. Respect
+details from a long article. For every claim select evidence by source_id and excerpt_id from
+the provided excerpts. Choose passages that directly support the claim and preserve their context.
+Do not write or reconstruct quotations; the program resolves the IDs to the actual source text.
+Identify syndication/shared original announcements. Respect
 operator origin mappings. verified requires at least two independent origin groups; otherwise
 attribute and explicitly mark uncertainty. Withhold for unknown dates or weak central evidence.`,
-    {candidate:selected,format,sources,origin_groups:c.origins,now:new Date().toISOString()},verificationSchema);
+    {candidate:selected,format,sources:excerpts,origin_groups:c.origins,now:new Date().toISOString()},verificationSchema);
+  const packet=resolveEvidence(assessment,excerpts);
   // Prefer timestamp evidence actually retrieved from the publisher over model date extraction.
   for(const assessment of packet.sources) {
     const publication=sources.find(s=>s.id===assessment.source_id)?.publication;

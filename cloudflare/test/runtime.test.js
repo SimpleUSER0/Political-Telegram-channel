@@ -140,8 +140,16 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
         let data;
         if(properties.candidates)data={candidates:[{event_key:'meeting-'+time,topic:'Meeting',event_at:time,
           source_ids:[0,1]}]};
-        else if(properties.publishable)data=variant==='gemini-feeds'
-          ?{...p.verification,sources:p.verification.sources.map(s=>({...s,published_at:null}))}:p.verification;
+        else if(properties.publishable) {
+          const input=JSON.parse(body.input || body.contents[0].parts[0].text);
+          data={...p.verification,
+            sources:p.verification.sources.map(s=>({...s,...(variant==='gemini-feeds'?{published_at:null}:{})})),
+            claims:p.verification.claims.map(claim=>({...claim,evidence:claim.evidence.map(e=>({
+              source_id:e.source_id,excerpt_id:input.sources.find(s=>s.id===e.source_id)
+                .excerpts.find(q=>q.text.includes(e.excerpt)).excerpt_id,
+            }))})),
+          };
+        }
         else if(properties.title)data=p.article;
         else if(properties.passed)data=p.fact_check;
         else throw new Error('Unexpected mock model call');

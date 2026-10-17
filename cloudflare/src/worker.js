@@ -2,7 +2,7 @@ import {Halt, articleText, config, equalSecret, id, json, missing, now, readText
   validateArticle, validatePacket} from './core.js';
 import {ensureSchema} from './schema.js';
 import {Store} from './store.js';
-import {editDraft, generate, llm, sourceButtons} from './research.js';
+import {checkSources, editDraft, generate, llm, sourceButtons} from './research.js';
 
 export class TelegramFailure extends Error {
   constructor(message, definitive=false) { super(message); this.definitive=definitive; }
@@ -191,6 +191,13 @@ export async function drain(c,store,kind,limit=1) {
       else if (kind==='setup') {
         // Only authenticated infrastructure administration can insert this job kind.
         // Public webhook payloads are normalized into control jobs and cannot request setup.
+        if(payload.action==='check_sources') {
+          const result=await checkSources(c);
+          await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('source_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            JSON.stringify(result)).run();
+          await store.finish(job);
+          continue;
+        }
         if (payload.action==='check_ai') {
           const result=await llm(c,store,'Return available=true to confirm structured API access.',{},
             {type:'object',properties:{available:{type:'boolean'}},required:['available'],additionalProperties:false});
