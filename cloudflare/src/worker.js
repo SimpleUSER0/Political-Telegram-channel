@@ -382,7 +382,7 @@ export async function drain(c,store,kind,limit=1) {
           const query=String(payload.query||'').trim();
           if(query.length<3 || query.length>120)throw new Halt('Invalid test topic');
           // No Gemini request or research run is consumed by this connectivity test.
-          const result=await lookupRequestedArticles(c,query);
+          const result=await lookupRequestedArticles({...c,age:Math.max(c.age,7*86400000)},query);
           const urls=result.articles.slice(0,12).map(a=>a.url);
           await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('generic_search_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             JSON.stringify({at:now(),query,provider:result.provider,urls,count:result.articles.length,success:urls.length>0})).run();
