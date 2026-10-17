@@ -1,5 +1,5 @@
 import {Halt, articleText, config, equalSecret, id, json, missing, now, readText,
-  validateArticle, validatePacket} from './core.js';
+  validateArticle, validatePacket,outputText} from './core.js';
 import {ensureSchema} from './schema.js';
 import {Store} from './store.js';
 import {checkSources, editDraft, fetchSource, generate, llm, sourceButtons} from './research.js';
@@ -182,6 +182,38 @@ export function authorizedUpdate(update,c) {
  * Authenticated private owner messages can request one reviewed, source-backed draft.
  * Slash commands unknown to the bot do not create an unexpected AI bill.
  */
+export function isConversation(text) {
+  const s=String(text||'').trim();
+  if(!s || s.startsWith('/'))return false;
+  // Explicit post/article instructions take precedence even when phrased as a question.
+  if(/(?:პოსტი|პოსტის|სტატია|სტატიის|დაპოსტ|გამოსაქვეყნებ|მოამზადე|დამიწერე)/iu.test(s))return false;
+  return /[?？]$/.test(s) || /^(?:რა |რას |როდის |სად |როგორ |რატომ |ვინ |ვის |რომელი |რამდენი |შეიძლება |შეგიძლია |მითხარი |ამიხსენი |გამარჯობა|ჰეი\b)/iu.test(s);
+}
+async function conversation(c,store,question) {
+  if(question.length<2 || question.length>1800)
+    throw new Halt('საუბრის ტექსტი უნდა იყოს 2–1800 სიმბოლო.');
+  if(!c.research || missing(c,true).length)
+    throw new Halt('Gemini საუბრისთვის მიუწვდომელია.');
+  // Conversation-only history; nothing is published, not inserted into article drafts.
+  const key='owner_chat_history';
+  const previous=await store.stmt('SELECT value FROM cf_meta WHERE key=?',key).first();
+  let history=[];
+  try {
+    const parsed=JSON.parse(previous?.value || '[]');
+    if(Array.isArray(parsed))history=parsed.filter(x=>['user','assistant'].includes(x.role)&&
+      typeof x.content==='string').slice(-6);
+  }catch{}
+  const answer=await llm({...c,manualTopic:true},store,
+    'You are a helpful conversational assistant speaking natural Georgian. Reply to the owner\'s actual question, on ANY lawful subject. Do NOT compose or publish a Telegram news post. Use conversational Georgian and acknowledge uncertainty about current facts; never invent sources or breaking news. Be concise.',
+    {history,question,now:new Date().toISOString()});
+  const reply=outputText(answer).trim();
+  if(!reply)throw new Halt('Gemini-მ საუბრის პასუხი ვერ დააბრუნა.');
+  history=[...history,{role:'user',content:question},{role:'assistant',content:reply}].slice(-6);
+  await store.stmt('INSERT INTO cf_meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+    key,JSON.stringify(history)).run();
+  return tell(c,reply.slice(0,3500));
+}
+
 export function manualPostRequest(text) {
   const raw=String(text || '').trim();
   if(!raw)return null;
@@ -229,7 +261,7 @@ async function handleControl(c,store,payload,job) {
   const text=payload.message?.text || '', [first,...lines]=text.split('\n');
   const [rawCommand,...args]=first.trim().split(/\s+/), command=rawCommand.split('@')[0];
   if (command==='/start' || command==='/help') return tell(c,
-    'მსოფლიო ფოკუსი — პოლიტიკური რედაქცია\n/news თემა — დამატებითი კვლევა\n/post თემა — პოსტი ხელით\nან უბრალოდ მომწერე თემა/ინსტრუქცია\n/breaking თემა — დღის განსაკუთრებული ამბავი (მაქს. 1)\n/stats — გამომწერები და ზრდა\n/pending — მონახაზები\n/show ID — მონახაზი\n/status — სტატუსი\n/edit ID:VERSION — სათაური, ცარიელი ხაზი, ტექსტი\n\nდაგეგმილი მონახაზები: 09:00 / 13:00 / 18:00 / 21:00 (საქართველო). გამოქვეყნება მხოლოდ შენი Publish-ით.');
+    'მსოფლიო ფოკუსი — პოლიტიკური რედაქცია\n/news თემა — დამატებითი კვლევა\n/post თემა — პოსტი ხელით\n/ask კითხვა — ჩვეულებრივი საუბარი Gemini-სთან\nმომწერე თემა — პოსტი; დასვი კითხვა — საუბარი\n/breaking თემა — დღის განსაკუთრებული ამბავი (მაქს. 1)\n/stats — გამომწერები და ზრდა\n/pending — მონახაზები\n/show ID — მონახაზი\n/status — სტატუსი\n/edit ID:VERSION — სათაური, ცარიელი ხაზი, ტექსტი\n\nდაგეგმილი მონახაზები: 09:00 / 13:00 / 18:00 / 21:00 (საქართველო). გამოქვეყნება მხოლოდ შენი Publish-ით.');
   if (command==='/status') return tell(c,JSON.stringify({provider:c.provider,model:c.model,research:c.research,publish:c.publish,schedule_hours_tbilisi:c.hours,
     missing:missing(c,true),...await store.status()},null,2));
   if (command==='/stats' || command==='/subscribers') {
@@ -247,7 +279,7 @@ async function handleControl(c,store,payload,job) {
     if (!c.research || missing(c,true).length) throw new Halt('კვლევა ჯერ გამორთულია ან კონფიგურაცია აკლია. /status');
     if (query.length<3 || query.length>1000) throw new Halt('გამოიყენე /news და მიუთითე თემა (3–1000 სიმბოლო)');
     // Deterministic id: re-running a control job cannot enqueue another paid research run.
-    await store.enqueue('research',{query,format:'STANDARD'},'research-'+job.id);
+    await store.enqueue('research',{query,format:'STANDARD',manual:true},'research-'+job.id);
     return tell(c,'კვლევა რიგშია. მომზადებული მონახაზი აქ მოვა.');
   }
   if (command==='/breaking') {
@@ -258,9 +290,15 @@ async function handleControl(c,store,payload,job) {
     const slot=await store.stmt('INSERT OR IGNORE INTO cf_slots(slot,created_at) VALUES (?,?)',
       'breaking-day-'+day,now()).run();
     if(!slot.meta?.changes)return tell(c,'დღევანდელი დამატებითი Breaking News უკვე გამოყენებულია. ჩვეულებრივი /news კვლავ მუშაობს.');
-    await store.enqueue('research',{query,format:'QUICK',edition:'breaking'},'breaking-'+day+'-manual');
+    await store.enqueue('research',{query,format:'QUICK',edition:'breaking',manual:true},'breaking-'+day+'-manual');
     return tell(c,'Breaking News-ის მონახაზი რიგშია. გამოქვეყნება შენს დადასტურებას მოითხოვს.');
   }
+  if(command==='/ask' || command==='/chat'){
+    const query=[args.join(' '),...lines].filter(Boolean).join('\n').trim();
+    if(!query)return tell(c,'მომწერე /ask და შეკითხვა ნებისმიერი თემის შესახებ.');
+    return conversation(c,store,query);
+  }
+  if(isConversation(text))return conversation(c,store,text);
   if (command==='/edit') {
     const match=/^([a-f0-9]{20}):([1-9]\d{0,5})$/.exec(args[0] || '');
     const title=lines.shift()?.trim(), body=lines.join('\n').trim();
@@ -277,7 +315,7 @@ async function handleControl(c,store,payload,job) {
       throw new Halt('პოსტის მომზადება გამორთულია ან კონფიგურაცია აკლია. /status');
     // Stable job ID per authorized Telegram update; the regular 4 slots and
     // optional extraordinary breaking slot remain independent.
-    await store.enqueue('research',manual,'manual-'+job.id);
+    await store.enqueue('research',{...manual,manual:true},'manual-'+job.id);
     return tell(c,'✅ ხელით მოთხოვნილი პოსტი რიგშია. წყაროსა და ფოტოს მოძიების შემდეგ მონახაზი მოვა Publish / Edit / Cancel ღილაკებით. ავტომატურად არ გამოქვეყნდება.');
   }
   return tell(c,'გამოიყენე /help ბრძანებების სანახავად.');
@@ -363,7 +401,7 @@ export async function drain(c,store,kind,limit=1) {
         await store.audit('webhook_setup_verified',null,'cloudflare-admin',job.id);
       }
       else if (kind==='research') {
-        const created=await generate(c,store,payload.query,payload.format,payload.edition||'night',payload.preferredUrl||null);
+        const created=await generate(c,store,payload.query,payload.format,payload.edition||'night',payload.preferredUrl||null,Boolean(payload.manual));
         // A notification error must not delete a completed draft or repeat paid research.
         try { await notify(c,created,store); } catch { console.warn('Draft created; owner notification unavailable'); }
       } else if (kind==='edit') {
