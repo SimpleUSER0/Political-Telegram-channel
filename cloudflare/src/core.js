@@ -31,7 +31,7 @@ export function config(env) {
   const discovery=env.DISCOVERY_MODE || 'web_search';
   if(!['web_search','feeds'].includes(discovery))throw new Halt('Invalid DISCOVERY_MODE');
   const feeds=[...new Set((env.SOURCE_FEEDS || 'bbc-world,guardian-world,civil-ge').split(',').map(s=>s.trim()).filter(Boolean))];
-  if(discovery==='feeds' && (feeds.length<1 || feeds.some(f=>!['bbc-world','guardian-world','civil-ge','netgazeti','bbc-asia','bbc-middle-east','guardian-china','guardian-us-politics','guardian-middle-east','guardian-ukraine'].includes(f))))
+  if(discovery==='feeds' && (feeds.length<1 || feeds.some(f=>!['bbc-world','guardian-world','civil-ge','netgazeti','bbc-asia','bbc-middle-east','guardian-china','guardian-japan','guardian-us-politics','guardian-middle-east','guardian-ukraine'].includes(f))))
     throw new Halt('SOURCE_FEEDS requires at least one known publisher feed');
   const channel = String(env.CHANNEL_ID || '');
   if (['@cifruli_era', '@digitalera101'].includes(channel.toLowerCase()))
