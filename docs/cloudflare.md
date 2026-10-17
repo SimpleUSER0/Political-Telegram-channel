@@ -11,8 +11,8 @@ If the selected articles have no supported publisher image, the run stops with a
 
 Research uses three model requests in feed mode: event selection, publisher-source review,
 and Georgian drafting. A separate repeated AI fact-check is no longer made for new drafts.
-A credible publisher's claim can be reported with attribution without pretending it is
-independently proven. Unknown URLs, duplicate events and unsupported source references remain
+One recent, dated article from a credible publisher is now sufficient to draft a post;
+claims from a single source must be attributed instead of presented as independently proven. Unknown URLs, duplicate events and unsupported source references remain
 blocked. Editing still checks the changed text against the original source packet once.
 Schema v2 adds only a photo file-ID table; existing drafts and history are preserved.
 

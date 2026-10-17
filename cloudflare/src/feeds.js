@@ -70,8 +70,7 @@ export async function discoverFeeds(c) {
     }catch{ /* An unavailable feed cannot be replaced with model memory. */ }
   }
   const entries=[...articles.values()].sort((a,b)=>b.published_at.localeCompare(a.published_at));
-  const origins=new Set(entries.map(e=>new URL(e.url).hostname.replace(/^www\./,'')));
-  if(used.length<2 || origins.size<2)throw new Halt('Fewer than two accessible recent publisher feeds');
+  if(!entries.length)throw new Halt('No accessible recent articles from configured publisher feeds');
   return {provider:'publisher-rss',articles:entries,grounding:{kind:'publisher-rss',feeds:used},output:[
     {type:'feed_discovery',action:{sources:entries.map(e=>({url:e.url}))}},
     {type:'message',content:[{type:'output_text',text:JSON.stringify({articles:entries})}]},

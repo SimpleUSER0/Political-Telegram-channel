@@ -18,14 +18,12 @@ test('only publisher-dated fresh articles reach paid verification; source IDs ar
   assert.equal(sources[0].id,10); // original records stay untouched
 });
 
-test('unknown, stale, future and single-domain evidence are withheld',()=>{
+test('one fresh source is sufficient; unknown, stale and future sources are filtered',()=>{
   const stale='2026-09-01T12:00:00Z',future='2026-10-17T12:00:00Z';
   for(const other of [null,stale,future]){
-    assert.throws(()=>requireDatedSources([story('bbc.com',recent,0),
-      story('civil.ge',other,1)],settings,instant),/evidenced publication dates/);
+    assert.throws(()=>requireDatedSources([story('civil.ge',other,1)],settings,instant),/No recent readable publisher/);
   }
-  assert.throws(()=>requireDatedSources([story('bbc.com',recent,0),
-    story('bbc.com',recent,1)],settings,instant),/evidenced publication dates/);
+  assert.equal(requireDatedSources([story('bbc.com',recent,0)],settings,instant).length,1);
 });
 
 test('preflight rejects insufficient daily budget without consuming calls or runs',async()=>{
