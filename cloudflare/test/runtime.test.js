@@ -6,7 +6,7 @@ import {payload} from './helpers.js';
 
 function modules(extraMain) {
   const result={};
-  for(const name of ['worker','core','store','schema','research','gemini','feeds','editorial','workers-ai','news-plan'])result[name+'.js']={
+  for(const name of ['worker','core','store','schema','research','gemini','feeds','editorial','workers-ai','news-plan','members'])result[name+'.js']={
     type:'esm',contents:readFileSync(new URL('../src/'+name+'.js',import.meta.url),'utf8'),
   };
   if(extraMain)result['harness.js']={type:'esm',contents:extraMain};
@@ -27,7 +27,7 @@ test('workerd initializes real D1 schema, handles health and rejects unconfigure
     assert.equal((await response.json()).runtime,'cloudflare-workers-d1');
     assert.equal((await runtime.dispatchFetch('https://test/ready')).status,503);
     const db=await runtime.getD1Database('DB');
-    assert.equal((await db.prepare("SELECT value FROM cf_meta WHERE key='schema_version'").first()).value,'2');
+    assert.equal((await db.prepare("SELECT value FROM cf_meta WHERE key='schema_version'").first()).value,'3');
   } finally {await runtime.dispose();}
 });
 
@@ -46,12 +46,14 @@ test('managed webhook setup: '+scenario,async()=>{
       username:'political_test_channel'}});
     if(method==='setWebhook') {
       const body=await request.json();
+      assert.deepEqual(body.allowed_updates,['message','callback_query','chat_member']);
       assert.equal(body.secret_token,secret);assert.equal(body.drop_pending_updates,false);
       assert.equal(body.url,base+'/telegram/webhook');registrations++;
       return Response.json({ok:true,result:true});
     }
     if(method==='getWebhookInfo')return Response.json({ok:true,result:{
-      url:scenario==='wrong webhook'?'https://wrong.example.com/':base+'/telegram/webhook'}});
+      url:scenario==='wrong webhook'?'https://wrong.example.com/':base+'/telegram/webhook',
+      allowed_updates:['message','callback_query','chat_member']}});
     if(method==='sendMessage'){posts++;return Response.json({ok:true,result:{message_id:1}});}
     throw new Error('Unexpected outbound method');
   },`
