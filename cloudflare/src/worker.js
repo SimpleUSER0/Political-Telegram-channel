@@ -2,7 +2,7 @@ import {Halt, articleText, config, equalSecret, id, json, missing, now, readText
   validateArticle, validatePacket} from './core.js';
 import {ensureSchema} from './schema.js';
 import {Store} from './store.js';
-import {checkSources, editDraft, generate, llm, sourceButtons} from './research.js';
+import {checkSources, editDraft, fetchSource, generate, llm, sourceButtons} from './research.js';
 
 export class TelegramFailure extends Error {
   constructor(message, definitive=false) { super(message); this.definitive=definitive; }
@@ -68,7 +68,7 @@ async function tell(c,text,reply_markup) {
   return telegram(c,'sendMessage',{chat_id:c.ownerChat,text:text.slice(0,4000),
     link_preview_options:{is_disabled:true},...(reply_markup?{reply_markup}:{})});
 }
-export async function notify(c,draft) {
+export async function notify(c,draft,store) {
   if (!draft) throw new Halt('Draft not found');
   const payload=JSON.parse(draft.payload), buttons=sourceButtons(payload);
   if (draft.state==='pending' && draft.expires_at>now()) buttons.unshift([
@@ -78,6 +78,16 @@ export async function notify(c,draft) {
   ]);
   const claims=payload.verification.claims;
   const uncertainty=claims.some(x=>x.status!=='verified')?'\n⚠️ ტექსტი შეიცავს ატრიბუციას ან გაურკვევლობას.':'';
+  if(payload.media) {
+    const caption=articleText(payload.article);
+    if(caption.length>1024)throw new Halt('ფოტოს ტექსტი მაქსიმუმ 1024 სიმბოლო უნდა იყოს.');
+    const cached=store?await store.stmt('SELECT file_id FROM cf_media WHERE draft_id=?',draft.id).first():null;
+    const sent=await telegram(c,'sendPhoto',{chat_id:c.ownerChat,photo:cached?.file_id || payload.media.url,
+      caption,reply_markup:{inline_keyboard:buttons}});
+    const fileId=sent?.photo?.at(-1)?.file_id;
+    if(store && fileId)await store.stmt('INSERT OR IGNORE INTO cf_media(draft_id,file_id) VALUES (?,?)',draft.id,fileId).run();
+    return sent;
+  }
   return tell(c,`მონახაზი ${draft.id}:${draft.version} · ${draft.state}${uncertainty}\n\n${articleText(payload.article)}`,
     {inline_keyboard:buttons});
 }
@@ -96,6 +106,13 @@ export async function publish(c,store,draftId,version) {
   validateArticle(payload.article,payload.verification,payload.sources);
   if (!payload.fact_check?.passed || payload.fact_check.unsupported_claims?.length ||
       payload.fact_check.missing_attributions?.length) throw new Halt('Draft has no valid fact check');
+  let photo=null;
+  if(payload.media) {
+    if(articleText(payload.article).length>1024)throw new Halt('ფოტოს ტექსტი მაქსიმუმ 1024 სიმბოლო უნდა იყოს.');
+    // Publish exactly the image previewed to the owner, not a mutable publisher URL.
+    photo=(await store.stmt('SELECT file_id FROM cf_media WHERE draft_id=?',draftId).first())?.file_id;
+    if(!photo)throw new Halt('ჯერ გახსენი /show '+draftId+' — ფოტოს გადახედვა საჭიროა.');
+  }
   // Atomic compare-and-set on exact version and state. All competing Publish/Edit/Cancel
   // requests lose this race; timeout recovery NEVER returns publishing to pending.
   const draft=await store.claimDraft(draftId,version,'publishing',c.owner);
@@ -110,8 +127,9 @@ export async function publish(c,store,draftId,version) {
   }
   let result;
   try {
-    result=await telegram(c,'sendMessage',{chat_id:c.channel,text:articleText(payload.article),
-      link_preview_options:{is_disabled:true},reply_markup:{inline_keyboard:sourceButtons(payload)}});
+    result=await telegram(c,photo?'sendPhoto':'sendMessage',{chat_id:c.channel,
+      ...(photo?{photo,caption:articleText(payload.article)}:{text:articleText(payload.article),link_preview_options:{is_disabled:true}}),
+      reply_markup:{inline_keyboard:sourceButtons(payload)}});
     if (!Number.isInteger(result?.message_id)) throw new TelegramFailure('Telegram result missing message id');
   } catch (error) {
     const state=error instanceof TelegramFailure && error.definitive?'failed':'unknown';
@@ -169,7 +187,7 @@ async function handleControl(c,store,payload,job) {
     const drafts=await store.pending();
     return tell(c,drafts.length?drafts.map(d=>`${d.id}:${d.version} · ${d.state}\n${d.topic}`).join('\n\n'):'მოლოდინში მონახაზი არ არის.');
   }
-  if (command==='/show') return notify(c,await store.draft(args[0]));
+  if (command==='/show') return notify(c,await store.draft(args[0]),store);
   if (command==='/news') {
     const query=args.join(' ');
     if (!c.research || missing(c,true).length) throw new Halt('კვლევა ჯერ გამორთულია ან კონფიგურაცია აკლია. /status');
@@ -201,6 +219,23 @@ export async function drain(c,store,kind,limit=1) {
       else if (kind==='setup') {
         // Only authenticated infrastructure administration can insert this job kind.
         // Public webhook payloads are normalized into control jobs and cannot request setup.
+        if(payload.action==='preview_style') {
+          // Private visual preview of an existing article; never a publication or new research.
+          const existing=await store.draft(payload.draftId);
+          if(!existing)throw new Halt('Draft not found');
+          const preview=JSON.parse(existing.payload);
+          for(const source of preview.sources) {
+            try {
+              const fetched=await fetchSource(source.url,c);
+              if(fetched.image){preview.media=fetched.image;preview.primary_source_id=source.id;break;}
+            }catch{}
+          }
+          if(!preview.media)throw new Halt('No publisher image available for preview');
+          const sent=await notify(c,{...existing,state:'preview',payload:JSON.stringify(preview)});
+          await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('style_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            JSON.stringify({at:now(),owner_message_id:sent.message_id,photo:Boolean(sent.photo?.length),source_buttons:1})).run();
+          await store.finish(job);continue;
+        }
         if(payload.action==='check_publishing') {
           const result=await checkPublishing(c);
           await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('publishing_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -239,12 +274,12 @@ export async function drain(c,store,kind,limit=1) {
       else if (kind==='research') {
         const created=await generate(c,store,payload.query,payload.format);
         // A notification error must not delete a completed draft or repeat paid research.
-        try { await notify(c,created); } catch { console.warn('Draft created; owner notification unavailable'); }
+        try { await notify(c,created,store); } catch { console.warn('Draft created; owner notification unavailable'); }
       } else if (kind==='edit') {
         draft=await store.claimDraft(payload.draftId,payload.version,'editing',c.owner);
         if (!draft) throw new Halt('მონახაზის ვერსია შეიცვალა ან ვადაგასულია');
         const edited=await editDraft(c,store,draft,payload.title,payload.body);
-        try { await notify(c,edited); } catch { console.warn('Draft edited; owner notification unavailable'); }
+        try { await notify(c,edited,store); } catch { console.warn('Draft edited; owner notification unavailable'); }
       }
       await store.finish(job);
     } catch (error) {

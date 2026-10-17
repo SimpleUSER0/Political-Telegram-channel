@@ -27,7 +27,7 @@ test('workerd initializes real D1 schema, handles health and rejects unconfigure
     assert.equal((await response.json()).runtime,'cloudflare-workers-d1');
     assert.equal((await runtime.dispatchFetch('https://test/ready')).status,503);
     const db=await runtime.getD1Database('DB');
-    assert.equal((await db.prepare("SELECT value FROM cf_meta WHERE key='schema_version'").first()).value,'1');
+    assert.equal((await db.prepare("SELECT value FROM cf_meta WHERE key='schema_version'").first()).value,'2');
   } finally {await runtime.dispose();}
 });
 
@@ -178,7 +178,7 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
     }
     if(url.pathname==='/unavailable')return new Response('',{status:403});
     if(['example.com','example.org'].includes(url.hostname))return new Response(
-      '<html><head><meta property="article:published_time" content="'+time+'"></head><body><nav>UNTRUSTED NAVIGATION</nav><script>INJECTED SCRIPT</script><article>'+time+
+      '<html><head><meta property="og:image" content="https://example.com/news-photo.jpg"><meta property="article:published_time" content="'+time+'"></head><body><nav>UNTRUSTED NAVIGATION</nav><script>INJECTED SCRIPT</script><article>'+time+
       ' '+p.sources[0].text+' '+('The report provides context for the diplomatic meeting. '.repeat(8))+
       '</article></body></html>',{headers:{'Content-Type':'text/html'}});
     if(url.hostname==='api.telegram.org') {
@@ -186,6 +186,7 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
       if(method==='getMe')return Response.json({ok:true,result:{id:555,is_bot:true,username:'political_test_bot'}});
       if(method==='getChat')return Response.json({ok:true,result:{type:'channel',username:'political_test_channel'}});
       if(method==='getChatMember')return Response.json({ok:true,result:{status:'administrator',can_post_messages:true}});
+      if(method==='sendPhoto'){const data=await request.json();assert.ok(data.caption.length<=1024);assert.equal(data.reply_markup.inline_keyboard.filter(row=>row.some(b=>b.url)).length,1);sends++;return Response.json({ok:true,result:{message_id:88,photo:[{file_id:'test-photo-id'}]}});}
       if(method==='sendMessage'){sends++;return Response.json({ok:true,result:{message_id:88}});}
     }
     throw new Error('Unexpected outbound request');
@@ -220,7 +221,7 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
     assert.ok(!evidence.includes('INJECTED SCRIPT'));
     assert.ok(!evidence.includes('UNTRUSTED NAVIGATION'));
     assert.equal(JSON.parse(draft.payload).sources[0].publication.published_at,time);
-    assert.equal(calls,feedMode?4:5);assert.equal(sends,1); // Owner draft notification only.
+    assert.equal(calls,feedMode?3:4);assert.equal(sends,1); // Owner draft notification only.
     if(feedMode)assert.equal(JSON.parse(draft.payload).grounding.kind,'publisher-rss');
     if(fallback) {
       const diagnostic=JSON.parse((await db.prepare("SELECT value FROM cf_meta WHERE key='research_source_diagnostic'").first()).value);
