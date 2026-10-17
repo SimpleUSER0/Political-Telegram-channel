@@ -62,8 +62,8 @@ test('Bing topic news requires original publisher links, discards search-engine 
    assert.match(String(url),/bing.com\/news\/search/);
    const item=(link,title)=>'<item><title>'+title+'</title><link><![CDATA['+link+
      ']]></link><pubDate>'+now+'</pubDate></item>';
-   const click='https://www.bing.com/news/apiclick.aspx?ref=test&url='+
-     encodeURIComponent('https://www.bbc.co.uk/news/articles/japan-policy');
+   const click='http://www.bing.com/news/apiclick.aspx?ref=FexRss&amp;aid=&amp;tid=123&amp;url='+
+     encodeURIComponent('https://www.bbc.co.uk/news/articles/japan-policy')+'&amp;mkt=en-us';
    return new Response('<rss><channel>'+
      item(click,'Japan parliament approves new agreement')+
      item('https://www.bing.com/news/articles/not-a-publisher','Bing index')+
