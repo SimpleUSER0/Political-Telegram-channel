@@ -4,6 +4,7 @@ import {geminiCall} from './gemini.js';
 import {workersAICall} from './workers-ai.js';
 import {discoverFeeds,feedImage,feedPublication} from './feeds.js';
 import {editorialCandidates,polishGeorgianArticle} from './editorial.js';
+import {editionDetails,rankEditorialEntries} from './news-plan.js';
 
 const EDITORIAL = `You are the independent Georgian-language WORLD FOCUS political newsroom.
 Cover world politics, diplomacy, geopolitical rivalries, security and consequential political
@@ -233,15 +234,13 @@ export function rankedCandidates(candidates,catalog,c,history,time=now()) {
 
 // RSS publishers supply actual titles, URLs and dates: never ask an LLM to invent
 // the event metadata or pair a real source ID with an unrelated event.
-export function publisherCandidates(entries,history=[],max=3) {
+export function publisherCandidates(entries,history=[],max=3,edition='night') {
   const hash=value=>{
     let h=2166136261;
     for(let i=0;i<value.length;i++)h=Math.imul(h^value.charCodeAt(i),16777619);
     return (h>>>0).toString(16);
   };
-  return entries.filter(e=>e.url && e.title && Number.isFinite(Date.parse(e.published_at)))
-    .sort((a,b)=>Date.parse(b.published_at)-Date.parse(a.published_at) ||
-      Number(Boolean(b.has_publisher_image))-Number(Boolean(a.has_publisher_image)))
+  return rankEditorialEntries(entries.filter(e=>e.url && e.title && Number.isFinite(Date.parse(e.published_at))),edition,history)
     .map(e=>({event_key:'rss_'+hash(e.url)+'_'+new Date(e.published_at).toISOString().slice(0,10),
       topic:e.title,event_at:e.published_at,source_ids:[e.source_id]}))
     .filter(e=>!history.some(h=>normalized(h.event_key)===normalized(e.event_key)))
@@ -318,10 +317,12 @@ covered by claim_ids. Reject unsupported assertions, missing uncertainty or stre
   return check;
 }
 
-export async function generate(c,store,query,format) {
+export async function generate(c,store,query,format,edition='night',preferredUrl=null) {
   if (!c.research || missing(c,true).length) throw new Halt('Research is disabled or not configured');
   if (!['FLASH','QUICK','STANDARD','DEEP'].includes(format) || typeof query!=='string' ||
-      query.trim().length<3 || query.length>1000) throw new Halt('Invalid research request');
+      query.trim().length<3 || query.length>1000 ||
+      !['morning','midday','evening','night','breaking'].includes(edition))
+    throw new Halt('Invalid research request');
   let stage='budget';
   try {
   const history = await store.history();
@@ -359,9 +360,11 @@ publication dates. Avoid all history events, including paraphrases. No suitable 
   });
   const relevantEntries=c.discovery==='feeds'?editorialCandidates(catalogEntries,query):catalogEntries;
   if(!relevantEntries.length)throw new Halt('No recent relevant political news in accessible publisher feeds for this topic');
-  const editorialCatalog=relevantEntries.map((entry,source_id)=>({...entry,source_id}));
+  const scopedEntries=preferredUrl?relevantEntries.filter(entry=>entry.url===preferredUrl):relevantEntries;
+  if(!scopedEntries.length)throw new Halt('Requested breaking article is not in the current trusted publisher feed');
+  const editorialCatalog=scopedEntries.map((entry,source_id)=>({...entry,source_id}));
   stage='candidate';
-  const discovery = c.discovery==='feeds'?{candidates:publisherCandidates(editorialCatalog,history)}:
+  const discovery = c.discovery==='feeds'?{candidates:publisherCandidates(editorialCatalog,history,3,edition)}:
     await llm(c,store,`Act as an editor selecting up to THREE different, consequential CURRENT POLITICAL stories.
 Follow the owner's /news topic strictly when specific; for a broad daily-news query prefer
 elections, legislation, governments, diplomacy, security, wars, sanctions, protests and major
@@ -473,14 +476,18 @@ Never put source URLs or labels in the text: Telegram adds one source-button sep
 Title + body MUST fit within 950 UTF-16 code units (Telegram photo caption).
 Only use the photo already retrieved from the source; never generate an image.
 Format FLASH is brief, QUICK concise, STANDARD compact with context, DEEP as detailed
-as the photo caption permits. Do not append metadata, pseudo-citations or numbered IDs.`,
-        {verification:packet,format},articleSchema);
+as the photo caption permits. Follow edition_targets for the Georgian word-count GOAL,
+not a mandatory minimum. Avoid filler or repetition if fewer supported details are available.
+Aim for 600-900 UTF-16 units in STANDARD when evidence permits, never exceeding 950.
+For evening, add helpful direct context; for breaking, state only confirmed new facts.
+Do not append metadata, pseudo-citations or numbered IDs.`,
+        {verification:packet,format,edition,edition_targets:editionDetails(edition)},articleSchema);
       const article=polishGeorgianArticle(generatedArticle);
       stage='source-backed-draft';
       validateArticle(article,packet,sources);
       if(articleText(article).length>950)throw new Halt('Draft exceeds the photo caption limit');
       const check={passed:true,unsupported_claims:[],missing_attributions:[],method:'publisher-review-and-local-validation'};
-      const payload={article,verification:packet,sources,selection:candidate,format,
+      const payload={article,verification:packet,sources,selection:candidate,format,edition,
         fact_check:check,checked_at:new Date().toISOString(),media:primary.image,
         primary_source_id:0,provider:c.provider,grounding:search.grounding || null};
       stage='draft-storage';
