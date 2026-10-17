@@ -6,7 +6,7 @@ import {payload} from './helpers.js';
 
 function modules(extraMain) {
   const result={};
-  for(const name of ['worker','core','store','schema','research','gemini','feeds'])result[name+'.js']={
+  for(const name of ['worker','core','store','schema','research','gemini','feeds','editorial'])result[name+'.js']={
     type:'esm',contents:readFileSync(new URL('../src/'+name+'.js',import.meta.url),'utf8'),
   };
   if(extraMain)result['harness.js']={type:'esm',contents:extraMain};
@@ -131,7 +131,7 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
       '<rss><channel><item><title>A diplomatic meeting</title><pubDate>'+new Date().toUTCString()+
       '</pubDate><link>https://'+(url.hostname==='feeds.bbci.co.uk'?'example.com':'example.org')+
       '/news</link><description>A recent independently reported meeting.</description></item>'+
-      (fallback && url.hostname==='feeds.bbci.co.uk'?'<item><title>A different event report</title><pubDate>'+
+      (fallback && url.hostname==='feeds.bbci.co.uk'?'<item><title>A different diplomatic event report</title><pubDate>'+
         new Date().toUTCString()+'</pubDate><link>https://example.com/unavailable</link></item>':'')+'</channel></rss>',
       {headers:{'Content-Type':'application/rss+xml'}});
     if(['api.openai.com','generativelanguage.googleapis.com'].includes(url.hostname)) {
