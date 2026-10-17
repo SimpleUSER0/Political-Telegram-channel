@@ -6,6 +6,7 @@ import {checkSources, editDraft, fetchSource, generate, llm, sourceButtons} from
 import {discoverFeeds} from './feeds.js';
 import {breakingCandidates,editionAtHour,localClock,REGULAR_QUERY} from './news-plan.js';
 import {parseMemberUpdate,saveMemberEvent,saveMemberCount,memberStatistics,memberAlert,memberReport} from './members.js';
+import {requireGeorgianQuality} from './georgian-quality.js';
 
 export class TelegramFailure extends Error {
   constructor(message, definitive=false) { super(message); this.definitive=definitive; }
@@ -116,6 +117,9 @@ export async function publish(c,store,draftId,version) {
   const payload=JSON.parse(existing.payload);
   validatePacket(payload.verification,payload.sources,c);
   validateArticle(payload.article,payload.verification,payload.sources);
+  // Enforce quality for old pending drafts, manual edits and new generations alike.
+  // Quality failures must never claim the draft or send anything to the channel.
+  requireGeorgianQuality(payload.article);
   if (!payload.fact_check?.passed || payload.fact_check.unsupported_claims?.length ||
       payload.fact_check.missing_attributions?.length) throw new Halt('Draft has no valid fact check');
   let photo=null;
