@@ -128,11 +128,11 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
   },async request=>{
     const url=new URL(request.url);
     if(['feeds.bbci.co.uk','www.theguardian.com'].includes(url.hostname))return new Response(
-      '<rss><channel><item><title>A diplomatic meeting</title><pubDate>'+new Date().toUTCString()+
+      '<rss><channel><item><title>A diplomatic meeting</title><pubDate>'+new Date(Date.now()+(photoFallback&&url.hostname==='www.theguardian.com'?60000:0)).toUTCString()+
       '</pubDate><link>https://'+(url.hostname==='feeds.bbci.co.uk'?'example.com':'example.org')+
       '/news</link><description>A recent independently reported meeting.</description></item>'+
       (fallback && url.hostname==='feeds.bbci.co.uk'?'<item><title>A different diplomatic event report</title><pubDate>'+
-        new Date().toUTCString()+'</pubDate><link>https://example.com/unavailable</link></item>':'')+'</channel></rss>',
+        new Date(Date.now()+60000).toUTCString()+'</pubDate><link>https://example.com/unavailable</link></item>':'')+'</channel></rss>',
       {headers:{'Content-Type':'application/rss+xml'}});
     if(['api.openai.com','generativelanguage.googleapis.com'].includes(url.hostname)) {
       const body=await request.json();
@@ -219,7 +219,7 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
     const jobs=await db.prepare('SELECT * FROM cf_jobs').all();
     if(duplicate) {
       assert.equal(draft,null);assert.match(jobs.results[0].error,/Duplicate underlying event/);
-      assert.equal(calls,2);assert.equal(sends,1);return;
+      assert.equal(calls,feedMode?1:2);assert.equal(sends,1);return;
     }
     assert.ok(draft,JSON.stringify(jobs.results));assert.equal(draft.state,'pending');
     const evidence=JSON.parse(draft.payload).sources[0].text;
@@ -227,7 +227,7 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
     assert.ok(!evidence.includes('INJECTED SCRIPT'));
     assert.ok(!evidence.includes('UNTRUSTED NAVIGATION'));
     assert.equal(JSON.parse(draft.payload).sources[0].publication.published_at,time);
-    assert.equal(calls,feedMode?3:4);assert.equal(sends,1); // Owner draft notification only.
+    assert.equal(calls,feedMode?2:4);assert.equal(sends,1); // Owner draft notification only.
     if(feedMode)assert.equal(JSON.parse(draft.payload).grounding.kind,'publisher-rss');
     if(fallback || photoFallback) {
       const diagnostic=JSON.parse((await db.prepare("SELECT value FROM cf_meta WHERE key='research_source_diagnostic'").first()).value);
