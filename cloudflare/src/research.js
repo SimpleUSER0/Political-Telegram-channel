@@ -296,6 +296,8 @@ attribute and explicitly mark uncertainty. Withhold for unknown dates or weak ce
   const article=await llm(c,store,`Write a neutral Georgian Telegram draft using ONLY the evidence.
 Every assertion must map to claim_ids (zero based). Preserve all attributions and uncertainty.
 Include every supporting source_id. No URLs or HTML in title/body. Title+body <=3500 UTF-16 units.
+IDs belong ONLY in claim_ids/source_ids metadata. Do not put numeric citation markers such as
+[0, 1], research notes or internal identifiers in the title/body; source buttons are added separately.
 Formats: FLASH very short; QUICK short; STANDARD contextual; DEEP as detailed as the limit permits.`,
     {verification:packet,format},articleSchema);
   stage='fact-check';
