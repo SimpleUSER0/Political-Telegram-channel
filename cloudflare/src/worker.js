@@ -173,6 +173,30 @@ export function authorizedUpdate(update,c) {
   return {message:{text:message.text}};
 }
 
+/**
+ * Authenticated private owner messages can request one reviewed, source-backed draft.
+ * Slash commands unknown to the bot do not create an unexpected AI bill.
+ */
+export function manualPostRequest(text) {
+  const raw=String(text || '').trim();
+  if(!raw)return null;
+  const [first,...remaining]=raw.split('\n');
+  const firstToken=first.trim().split(/\s+/)[0];
+  const command=firstToken.split('@')[0].toLowerCase();
+  const explicit=command==='/post'||command==='/draft';
+  if(raw.startsWith('/') && !explicit)return null;
+  let query=explicit?
+    [first.trim().slice(firstToken.length).trim(),...remaining].join('\n').trim():
+    raw;
+  if(explicit && !query)query=REGULAR_QUERY;
+  if(query.length<3 || query.length>1000)
+    return {error:'პოსტის თემა უნდა იყოს 3–1000 სიმბოლო.'};
+  const format=/(?:მოკლე|მოკლედ|კონსპექტურად|brief|short)/iu.test(query)?'QUICK':
+    /(?:ვრცლად|დეტალურად|დეტალური|ღრმად|in.depth|detailed)/iu.test(query)?'DEEP':
+    /(?:სასწრაფო|მყისიერი|breaking|flash)/iu.test(query)?'FLASH':'STANDARD';
+  return {query,format,edition:'night'};
+}
+
 async function handleControl(c,store,payload,job) {
   if (payload.membership) {
     const event=payload.membership;
@@ -200,7 +224,7 @@ async function handleControl(c,store,payload,job) {
   const text=payload.message?.text || '', [first,...lines]=text.split('\n');
   const [rawCommand,...args]=first.trim().split(/\s+/), command=rawCommand.split('@')[0];
   if (command==='/start' || command==='/help') return tell(c,
-    'მსოფლიო ფოკუსი — პოლიტიკური რედაქცია\n/news თემა — დამატებითი კვლევა\n/breaking თემა — დღის განსაკუთრებული ამბავი (მაქს. 1)\n/stats — გამომწერები და ზრდა\n/pending — მონახაზები\n/show ID — მონახაზი\n/status — სტატუსი\n/edit ID:VERSION — სათაური, ცარიელი ხაზი, ტექსტი\n\nდაგეგმილი მონახაზები: 09:00 / 13:00 / 18:00 / 21:00 (საქართველო). გამოქვეყნება მხოლოდ შენი Publish-ით.');
+    'მსოფლიო ფოკუსი — პოლიტიკური რედაქცია\n/news თემა — დამატებითი კვლევა\n/post თემა — პოსტი ხელით\nან უბრალოდ მომწერე თემა/ინსტრუქცია\n/breaking თემა — დღის განსაკუთრებული ამბავი (მაქს. 1)\n/stats — გამომწერები და ზრდა\n/pending — მონახაზები\n/show ID — მონახაზი\n/status — სტატუსი\n/edit ID:VERSION — სათაური, ცარიელი ხაზი, ტექსტი\n\nდაგეგმილი მონახაზები: 09:00 / 13:00 / 18:00 / 21:00 (საქართველო). გამოქვეყნება მხოლოდ შენი Publish-ით.');
   if (command==='/status') return tell(c,JSON.stringify({provider:c.provider,model:c.model,research:c.research,publish:c.publish,schedule_hours_tbilisi:c.hours,
     missing:missing(c,true),...await store.status()},null,2));
   if (command==='/stats' || command==='/subscribers') {
@@ -240,6 +264,16 @@ async function handleControl(c,store,payload,job) {
     if (!c.research || missing(c,true).length) throw new Halt('რედაქტირებას ჩართული ფაქტების გადამოწმება სჭირდება');
     await store.enqueue('edit',{draftId:match[1],version:Number(match[2]),title,body},'edit-'+job.id);
     return tell(c,'რედაქტირება რიგშია; ტექსტი ხელახლა გადამოწმდება.');
+  }
+  const manual=manualPostRequest(text);
+  if(manual) {
+    if(manual.error)throw new Halt(manual.error);
+    if(!c.research || missing(c,true).length)
+      throw new Halt('პოსტის მომზადება გამორთულია ან კონფიგურაცია აკლია. /status');
+    // Stable job ID per authorized Telegram update; the regular 4 slots and
+    // optional extraordinary breaking slot remain independent.
+    await store.enqueue('research',manual,'manual-'+job.id);
+    return tell(c,'✅ ხელით მოთხოვნილი პოსტი რიგშია. წყაროსა და ფოტოს მოძიების შემდეგ მონახაზი მოვა Publish / Edit / Cancel ღილაკებით. ავტომატურად არ გამოქვეყნდება.');
   }
   return tell(c,'გამოიყენე /help ბრძანებების სანახავად.');
 }
