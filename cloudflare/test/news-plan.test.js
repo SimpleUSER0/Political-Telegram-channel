@@ -29,7 +29,7 @@ test('One deterministic regular research job per slot with correct editorial edi
   await schedule(active,store,Date.UTC(2026,9,17,11,4)); // old 15:00 slot excluded
   const rows=(await store.stmt("SELECT id,payload FROM cf_jobs WHERE kind='research' ORDER BY id").all()).results;
   assert.equal(rows.length,4);
-  assert.deepEqual(rows.map(row=>JSON.parse(row.payload).edition),['midday','evening','night','morning'].sort());
+  assert.deepEqual(rows.map(row=>JSON.parse(row.payload).edition),['morning','midday','evening','night']);
   assert.ok(rows.every(row=>JSON.parse(row.payload).format==='STANDARD'));
 });
 test('Soft editorial category mix favors relevant editions but never fabricates content',()=>{
