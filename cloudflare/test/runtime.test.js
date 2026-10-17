@@ -153,15 +153,18 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
         else if(properties.publishable) {
           const input=JSON.parse(body.input || body.contents[0].parts[0].text);
           if(withHistory)assert.equal(input.history[0].event_key,'prior-diplomatic-event');
+          // Model can mislabel the publisher; the Worker corrects it from the actual URL.
           data={...p.verification,duplicate_event:duplicate,
-            sources:p.verification.sources.map(s=>({...s,...(feedMode?{published_at:null}:{})})),
-            claims:p.verification.claims.map(claim=>({...claim,evidence:claim.evidence.map(e=>({
-              source_id:e.source_id,excerpt_id:input.sources.find(s=>s.id===e.source_id)
-                .excerpts.find(q=>q.text.includes(e.excerpt)).excerpt_id,
-            }))})),
+            sources:[{...p.verification.sources[0],origin_group:'wrong-ai-group',
+              ...(feedMode?{published_at:null}:{})}],
+            claims:p.verification.claims.map(claim=>({...claim,status:'verified',
+              origin_groups:['wrong-ai-group'],evidence:[{
+                source_id:0,excerpt_id:input.sources[0].excerpts
+                  .find(q=>q.text.includes(claim.evidence[0].excerpt)).excerpt_id,
+              }]})),
           };
         }
-        else if(properties.title)data=p.article;
+        else if(properties.title)data={...p.article,source_ids:[0]};
         else if(properties.passed)data=p.fact_check;
         else throw new Error('Unexpected mock model call');
         result={output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(data)}]}]};
@@ -212,7 +215,7 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
     const draft=await db.prepare("SELECT * FROM cf_drafts WHERE id!='prior-event'").first();
     const jobs=await db.prepare('SELECT * FROM cf_jobs').all();
     if(duplicate) {
-      assert.equal(draft,null);assert.equal(jobs.results[0].error,'Duplicate underlying event');
+      assert.equal(draft,null);assert.match(jobs.results[0].error,/Duplicate underlying event/);
       assert.equal(calls,2);assert.equal(sends,1);return;
     }
     assert.ok(draft,JSON.stringify(jobs.results));assert.equal(draft.state,'pending');
