@@ -212,7 +212,9 @@ export function rankedCandidates(candidates,catalog,c,history,time=now()) {
         !event.topic?.trim() || event.topic.length>600 || !Number.isFinite(stamp) ||
         stamp>time+600000)continue;
       event.event_key=normalized(event.event_key);
-      if(history.some(h=>normalized(h.event_key)===event.event_key || normalized(h.topic)===normalized(event.topic)))continue;
+      // A substantively NEW decision or development on the same subject is allowed;
+      // reusing the identical underlying event remains blocked.
+      if(history.some(h=>normalized(h.event_key)===event.event_key))continue;
       if(!result.some(r=>r.event_key===event.event_key))result.push({...event,source_urls});
     }catch(error){if(!(error instanceof Halt))throw error;}
   }
@@ -220,7 +222,7 @@ export function rankedCandidates(candidates,catalog,c,history,time=now()) {
   return result;
 }
 
-export function excerptCatalog(sources) {
+export function excerptCatalog(sources,focus='') {
   return sources.map(({text,...source})=>{
     const excerpts=[],canonical=normalized(text);
     // Bound quotes before the model sees them. Every entry is an exact contiguous
@@ -234,8 +236,37 @@ export function excerptCatalog(sources) {
       }
     }
     if(!excerpts.length)throw new Halt('Source contains no citable excerpts');
-    return {...source,excerpts};
+    // Send a bounded set of verbatim passages, not the entire 45 KB news article,
+    // preserving the opening and ranking later passages against the event topic.
+    const keywords=[...new Set((normalized(focus).match(/[\\p{L}\\p{N}]{4,}/gu)||[])
+      .filter(word=>!['news','world','about','from','with','that','this','today'].includes(word)))];
+    const scored=excerpts.map((entry,index)=>({entry,index,
+      score:keywords.reduce((n,word)=>n+(normalized(entry.text).includes(word)?1:0),0)}));
+    const chosen=[...scored.slice(0,3),...scored.slice(3)
+      .sort((a,b)=>b.score-a.score||a.index-b.index).slice(0,15)]
+      .sort((a,b)=>a.index-b.index)
+      .map(({entry},excerpt_id)=>({...entry,excerpt_id}));
+    return {...source,excerpts:chosen};
   });
+}
+
+export function normalizePublisherEvidence(packet,sources,c) {
+  // The retrieved publisher URL, not the model's guesses, defines its origin.
+  // Canonicalization prevents a harmless model grouping typo from discarding an article.
+  const lookup=new Map(sources.map(source=>[source.id,source]));
+  const publishers={'bbc.co.uk':'BBC','bbc.com':'BBC','theguardian.com':'The Guardian',
+    'civil.ge':'Civil.ge','netgazeti.ge':'Netgazeti','apnews.com':'AP News','reuters.com':'Reuters'};
+  const assessed=packet.sources.map(record=>{
+    const source=lookup.get(record.source_id);
+    if(!source)return record; // Existing validator rejects unknown source IDs.
+    const host=new URL(source.url).hostname.replace(/^www\\./,'');
+    const publisher=Object.entries(publishers).find(([domain])=>host===domain || host.endsWith('.'+domain))?.[1]||host;
+    return {...record,origin_group:publisherGroup(source.url,c),publisher};
+  });
+  const origins=new Map(assessed.map(source=>[source.source_id,source.origin_group]));
+  return {...packet,sources:assessed,claims:packet.claims.map(claim=>({
+    ...claim,origin_groups:[...new Set(claim.evidence.map(e=>origins.get(e.source_id)).filter(Boolean))],
+  }))};
 }
 
 export function resolveEvidence(packet,catalog) {
