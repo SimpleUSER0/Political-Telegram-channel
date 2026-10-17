@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {topicLookupUrl,parseTopicIndex,rankRequestedArticles} from '../src/topic-search.js';
+import {topicLookupUrl,parseTopicIndex,rankRequestedArticles,guardianTopicLookup,bingTopicLookup} from '../src/topic-search.js';
 
 test('News index search URL has fixed HTTPS origin and properly escaped arbitrary query',()=>{
  const url=new URL(topicLookupUrl('New Zealand elections and policy'));
@@ -35,4 +35,44 @@ test('Index-selected topical articles without literal country name remain candid
  const docs=[{title:'Takaichi approves new trade measure',feed:'gdelt-index',
   published_at:'2026-10-17T19:00:00Z'}];
  assert.deepEqual(rankRequestedArticles(docs,'Japan trade'),docs);
+});
+
+test('Guardian topic search uses publisher-owned dated URLs without relying on fixed countries',async()=>{
+ const original=globalThis.fetch;
+ globalThis.fetch=async url=>{
+   const u=new URL(url);
+   assert.equal(u.origin,'https://content.guardianapis.com');
+   assert.equal(u.searchParams.get('q'),'Japan politics');
+   return Response.json({response:{results:[
+     {webUrl:'https://www.theguardian.com/world/2026/oct/17/japan-trade-summit',
+       webTitle:'Tokyo government holds trade summit',webPublicationDate:new Date().toISOString()},
+     {webUrl:'https://attacker.invalid/missing',webTitle:'Fake',webPublicationDate:new Date().toISOString()},
+   ]}});
+ };
+ try {
+   const articles=await guardianTopicLookup({domains:['theguardian.com'],age:172800000},'Japan politics');
+   assert.equal(articles.length,1);
+   assert.equal(articles[0].feed,'guardian-api');
+   assert.ok(rankRequestedArticles(articles,'Japan politics').length===1);
+ }finally{globalThis.fetch=original}
+});
+test('Bing topic news requires original publisher links, discards search-engine URLs',async()=>{
+ const original=globalThis.fetch,now=new Date().toUTCString();
+ globalThis.fetch=async url=>{
+   assert.match(String(url),/bing.com\/news\/search/);
+   const item=(link,title)=>'<item><title>'+title+'</title><link><![CDATA['+link+
+     ']]></link><pubDate>'+now+'</pubDate></item>';
+   const click='https://www.bing.com/news/apiclick.aspx?ref=test&url='+
+     encodeURIComponent('https://www.bbc.co.uk/news/articles/japan-policy');
+   return new Response('<rss><channel>'+
+     item(click,'Japan parliament approves new agreement')+
+     item('https://www.bing.com/news/articles/not-a-publisher','Bing index')+
+     item('https://attacker.invalid/x','Spoofed headline')+
+     '</channel></rss>',{headers:{'Content-Type':'application/rss+xml'}});
+ };
+ try{
+   const articles=await bingTopicLookup({domains:['bbc.co.uk'],age:172800000},'Japan politics');
+   assert.equal(articles.length,1);
+   assert.equal(articles[0].url,'https://www.bbc.co.uk/news/articles/japan-policy');
+ }finally{globalThis.fetch=original}
 });

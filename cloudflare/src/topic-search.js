@@ -54,10 +54,74 @@ export function rankRequestedArticles(articles,searchTerms,max=3) {
     return {article,matched};
   });
   const hasDirectMatch=ranked.some(x=>x.matched>0);
-  return ranked.filter(x=>hasDirectMatch?x.matched>0:x.article.feed==='gdelt-index')
+  return ranked.filter(x=>hasDirectMatch?x.matched>0:['gdelt-index','guardian-api','bing-index'].includes(x.article.feed))
     .sort((a,b)=>b.matched-a.matched||
       Date.parse(b.article.published_at)-Date.parse(a.article.published_at))
     .slice(0,max).map(x=>x.article);
+}
+// Publisher-owned content API: real Guardian titles/URLs/publication times.
+// 'test' is the publicly documented low-rate demonstration key.
+export async function guardianTopicLookup(c,englishKeywords) {
+  const u=new URL('https://content.guardianapis.com/search');
+  u.searchParams.set('api-key','test');
+  u.searchParams.set('q',String(englishKeywords).slice(0,140));
+  u.searchParams.set('order-by','newest');
+  u.searchParams.set('page-size','35');
+  const response=await fetch(u.href,{signal:AbortSignal.timeout(8500),
+    headers:{Accept:'application/json'}});
+  if(!response.ok){await response.body?.cancel();return [];}
+  const packet=JSON.parse(await readText(response,300000));
+  const items=packet?.response?.results||[];
+  if(!Array.isArray(items))return [];
+  const results=[];
+  for(const item of items){
+    let url;try{url=sourceUrl(item.webUrl,c.domains)}catch{continue}
+    const published=Date.parse(String(item.webPublicationDate||''));
+    if(!Number.isFinite(published)||published<Date.now()-c.age||
+       published>Date.now()+600000||typeof item.webTitle!=='string')continue;
+    results.push({url,title:item.webTitle.slice(0,180),summary:'',
+      published_at:new Date(published).toISOString(),feed:'guardian-api'});
+  }
+  return results;
+}
+function rssField(item,name) {
+  const raw=new RegExp('<'+name+'(?:\\s[^>]*)?>([\\s\\S]*?)</'+name+'>','i')
+    .exec(item)?.[1]||'';
+  return raw.replace(/^<!\[CDATA\[|\]\]>$/g,'').replace(/&amp;/g,'&')
+    .replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"')
+    .replace(/<[^>]+>/g,'').trim();
+}
+// Bing's public RSS supports arbitrary search queries. Some items use Bing's
+// news/apiclick redirect; accept ONLY a publisher URL inside a named query arg,
+// validate it against the existing allowed publisher domains.
+export async function bingTopicLookup(c,englishKeywords) {
+  const u=new URL('https://www.bing.com/news/search');
+  u.searchParams.set('q',String(englishKeywords).slice(0,140));
+  u.searchParams.set('format','rss');
+  const response=await fetch(u.href,{signal:AbortSignal.timeout(8500),
+    headers:{Accept:'application/rss+xml'}});
+  if(!response.ok){await response.body?.cancel();return [];}
+  const xml=await readText(response,400000);
+  if(!/<rss[\s>]/i.test(xml))return [];
+  const results=[],seen=new Set();
+  for(const match of xml.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)){
+    const item=match[1],raw=rssField(item,'link'),headline=rssField(item,'title');
+    let direct=raw;
+    try{
+      const link=new URL(raw);
+      if(link.hostname==='www.bing.com'||link.hostname==='bing.com')
+        direct=link.searchParams.get('url')||link.searchParams.get('u')||'';
+    }catch{continue}
+    let url;try{url=sourceUrl(direct,c.domains)}catch{continue}
+    const when=Date.parse(rssField(item,'pubDate'));
+    if(!headline||!Number.isFinite(when)||when<Date.now()-c.age||
+       when>Date.now()+600000||seen.has(url))continue;
+    results.push({url,title:headline.slice(0,180),summary:'',
+      published_at:new Date(when).toISOString(),feed:'bing-index'});
+    seen.add(url);
+    if(results.length>=50)break;
+  }
+  return results;
 }
 export async function lookupRequestedArticles(c,englishKeywords) {
   const url=topicLookupUrl(englishKeywords);
@@ -70,18 +134,32 @@ export async function lookupRequestedArticles(c,englishKeywords) {
       external=parseTopicIndex(JSON.parse(raw),c.domains);
     }else await response.body?.cancel();
   }catch{ /* Public news index is best-effort. RSS remains a fallback. */ }
-  // Even if GDELT is unavailable, search the current publisher feed catalog.
-  let feed=[];
+  let channel=external.length?'gdelt-public-index':null;
+  if(!external.length){
+    try{
+      external=await guardianTopicLookup(c,englishKeywords);
+      if(external.length)channel='guardian-open-platform';
+    }catch{}
+  }
+  if(!external.length){
+    try{
+      external=await bingTopicLookup(c,englishKeywords);
+      if(external.length)channel='bing-news-rss';
+    }catch{}
+  }
+  // Fallback publisher feeds must STILL be matched to the owner's English
+  // subject. A generic world-politics headline is never a valid substitute.
   if(!external.length){
     try{
       const rss=await discoverFeeds(c,'');
-      feed=rss.articles.map(({url,title,summary,published_at,image,feed})=>
+      external=rss.articles.map(({url,title,summary,published_at,image,feed})=>
         ({url,title,summary,published_at,image,feed}));
+      if(external.length)channel='publisher-rss-fallback';
     }catch{}
   }
-  const articles=[...external,...feed];
-  if(!articles.length)throw new Halt('No accessible articles for requested topic');
-  return {articles,provider:external.length?'gdelt-public-index':'publisher-rss-fallback',
-    grounding:{kind:'independent-news-index',index:external.length?'gdelt':'publisher-rss'},
+  if(!external.length)throw new Halt('No accessible articles for requested topic');
+  const articles=[...new Map(external.map(a=>[a.url,a])).values()];
+  return {articles,provider:channel,
+    grounding:{kind:'independent-news-index',index:channel},
     output:[{type:'topic_discovery',action:{sources:articles.map(({url})=>({url}))}}]};
 }
