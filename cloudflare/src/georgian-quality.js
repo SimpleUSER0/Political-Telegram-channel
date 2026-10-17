@@ -32,10 +32,10 @@ export function georgianQualityIssues(article) {
   const words=normalizedSentence(article.body).split(' ').filter(Boolean);
   // Repetition of whole long phrases, even across different sentences.
   const ngrams=new Map();
-  for(let i=0;i+7<=words.length;i++){
-    const ngram=words.slice(i,i+7).join(' ');
+  for(let i=0;i+5<=words.length;i++){
+    const ngram=words.slice(i,i+5).join(' ');
     const last=ngrams.get(ngram);
-    if(last!==undefined && i-last>=7){issues.push('repeated-phrase');break;}
+    if(last!==undefined && i-last>=5){issues.push('repeated-phrase');break;}
     if(last===undefined)ngrams.set(ngram,i);
   }
   const letters=text.match(/\p{L}/gu)||[];
