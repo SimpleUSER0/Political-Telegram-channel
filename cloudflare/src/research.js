@@ -1,6 +1,7 @@
 import {Halt, articleText, missing, normalized, now, outputText, readText, retrievedUrls,
   sourceUrl, validateArticle, validatePacket, validateJson} from './core.js';
 import {geminiCall} from './gemini.js';
+import {workersAICall} from './workers-ai.js';
 import {discoverFeeds,feedImage,feedPublication} from './feeds.js';
 import {editorialCandidates} from './editorial.js';
 
@@ -65,6 +66,7 @@ export async function llm(c, store, instruction, data, schema = null, search = f
   if (problems.length) throw new Halt('Research configuration incomplete');
   const day = await store.reserve('calls', c.dailyCalls);
   if (c.provider==='gemini') return geminiCall(c,store,day,EDITORIAL+'\n'+instruction,data,schema,search);
+  if (c.provider==='workers-ai')return workersAICall(c,store,day,EDITORIAL+'\n'+instruction,data,schema,search);
   const body = {model:c.model,store:false,instructions:EDITORIAL+'\n'+instruction,
     input:JSON.stringify(data),max_output_tokens:c.maxTokens};
   if (schema) body.text = {format:{type:'json_schema',name:'newsroom_result',strict:true,schema}};
