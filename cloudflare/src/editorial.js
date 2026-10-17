@@ -5,7 +5,7 @@ const ROUTINE = /\b(?:nursery|poison(?:ed|ing)?|celebrity|actor|actress|football
 const TOPICS = [
   {id:'japan',question:/იაპონ|ტოკიო|japan|japanese|tokyo|kishida|ishiba|takaichi/i,
     article:/\b(?:japan|japanese|tokyo|japan's|japan–|ishiba|takaichi|kishida)\b|იაპონ|ტოკიო|ტაკაიჩ|იშიბ|კიშიდ/iu,
-    headlineRequired:true,feeds:['bbc-asia','guardian-japan']},
+    headlineRequired:true,feeds:['bbc-asia','guardian-japan','japan-times']},
   {id:'china',question:/ჩინეთ|პეკინ|ტაივან|china|chinese|beijing|taiwan|xi jinping/i,
     article:/\b(?:china|chinese|beijing|taiwan|xi jinping|hong kong|south china sea)\b|ჩინეთ|პეკინ|ტაივან|სი ძინპინ/iu,
     feeds:['bbc-asia','guardian-china']},
