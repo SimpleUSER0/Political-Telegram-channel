@@ -22,7 +22,7 @@ test('feed discovery cannot follow a publisher redirect to a private or unrelate
 });
 test('feed mode is an explicit configuration choice and rejects unknown feed targets',()=>{
   assert.equal(config({}).discovery,'web_search');
-  assert.throws(()=>config({DISCOVERY_MODE:'feeds',SOURCE_FEEDS:'bbc-world,internal-metadata'}),/known publisher feeds/);
+  assert.throws(()=>config({DISCOVERY_MODE:'feeds',SOURCE_FEEDS:'bbc-world,internal-metadata'}),/known publisher feed/);
   assert.deepEqual(config({DISCOVERY_MODE:'feeds',SOURCE_FEEDS:'bbc-world'}).feeds,['bbc-world']);
 });
 test('Georgian publisher feed dates remain tied to their own discovered articles',()=>{
