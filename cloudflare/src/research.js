@@ -14,7 +14,7 @@ const array = items => ({type:'array', items});
 const object = properties => ({type:'object', properties, required:Object.keys(properties), additionalProperties:false});
 const candidateSchema = object({event_key:s, topic:s, event_at:s, source_ids:array(integer)});
 const verificationSchema = object({
-  publishable:bool, reason:s, contradictions:array(s),
+  publishable:bool, duplicate_event:bool, reason:s, contradictions:array(s),
   sources:array(object({source_id:integer, published_at:{type:['string','null']}, origin_group:s,
     publisher:s, kind:{type:'string',enum:['primary','independent','syndicated','unknown']}})),
   claims:array(object({text:s, status:{type:'string',enum:['verified','attributed','unverified','disputed']},
@@ -148,7 +148,7 @@ export function requireDatedSources(sources,c,time=now()) {
     return typeof iso==='string' && /(?:Z|[+-]\d\d:\d\d)$/.test(iso) &&
       Number.isFinite(stamp) && stamp>=time-c.age && stamp<=time+600000;
   });
-  if(dated.length<2 || new Set(dated.map(s=>new URL(s.url).hostname)).size<2)
+  if(dated.length<2 || new Set(dated.map(s=>publisherGroup(s.url,c))).size<2)
     throw new Halt('Fewer than two fresh sources with evidenced publication dates');
   return dated.map((source,id)=>({...source,id}));
 }
@@ -161,6 +161,32 @@ export function selectDiscoveredSources(ids,catalog) {
   const urls=[...new Set(ids.map(i=>catalog[i]))];
   if(urls.length<2 || urls.length>6)throw new Halt('Select two to six discovered sources');
   return urls;
+}
+
+export function publisherGroup(url,c) {
+  const host=new URL(url).hostname;
+  const mapped=Object.entries(c.origins || {}).find(([domain])=>host===domain || host.endsWith('.'+domain));
+  if(mapped)return normalized(mapped[1]);
+  return (c.domains || []).filter(domain=>host===domain || host.endsWith('.'+domain))
+    .sort((a,b)=>b.length-a.length)[0] || host.replace(/^www\./,'');
+}
+
+export function rankedCandidates(candidates,catalog,c,history,time=now()) {
+  if(!Array.isArray(candidates) || candidates.length>3)throw new Halt('Invalid candidate list');
+  const result=[];
+  for(const {source_ids,...event} of candidates) {
+    try {
+      const source_urls=selectDiscoveredSources(source_ids,catalog),stamp=Date.parse(event.event_at);
+      if(!event.event_key?.trim() || event.event_key.length<8 || event.event_key.length>300 ||
+        !event.topic?.trim() || event.topic.length>600 || !Number.isFinite(stamp) ||
+        stamp<time-c.age || stamp>time+600000 || new Set(source_urls.map(url=>publisherGroup(url,c))).size<2)continue;
+      event.event_key=normalized(event.event_key);
+      if(history.some(h=>normalized(h.event_key)===event.event_key || normalized(h.topic)===normalized(event.topic)))continue;
+      if(!result.some(r=>r.event_key===event.event_key))result.push({...event,source_urls});
+    }catch(error){if(!(error instanceof Halt))throw error;}
+  }
+  if(!result.length)throw new Halt('No fresh new candidate with two distinct publishers');
+  return result;
 }
 
 export function excerptCatalog(sources) {
@@ -213,7 +239,7 @@ export async function generate(c,store,query,format) {
   const history = await store.history();
   // Reserve the run only when the remaining daily call budget can cover an
   // entire four/five-step workflow; avoid a predictable partial paid run.
-  const requiredCalls=(c.discovery==='feeds'?4:5)+(history.length?1:0);
+  const requiredCalls=c.discovery==='feeds'?4:5;
   await store.requireCallCapacity(c.dailyCalls,requiredCalls);
   await store.reserve('runs',c.dailyRuns);
   stage='discovery';
@@ -225,56 +251,52 @@ publication dates. Avoid all history events, including paraphrases. No suitable 
   if (allowed.size<2) throw new Halt('Search returned insufficient admissible source URLs');
   const catalog=[...allowed];
   const catalogEntries=catalog.map((url,source_id)=>({
-    ...((search.articles || []).find(article=>article.url===url) || {}),source_id,url,
+    ...((search.articles || []).find(article=>article.url===url) || {}),source_id,url,publisher_group:publisherGroup(url,c),
   }));
   stage='candidate';
-  const discovery = await llm(c,store,`Extract at most one candidate from the research.
+  const discovery = await llm(c,store,`Return up to THREE ranked candidates for DIFFERENT new political events.
 Choose 2-6 source_ids from the provided source_catalog covering the SAME event, from at least two
-independent publishers. Copy the integer IDs; do not write, reconstruct or canonicalize URLs.
+DIFFERENT publisher_group values for EACH candidate. Two Civil.ge articles count as ONE publisher.
+Prefer standalone news articles; avoid /live/ URLs, opinion and rolling background briefings.
+Copy the integer IDs; do not write, reconstruct or canonicalize URLs. Never repeat any history event.
 event_key must identify the precise event and UTC date, in normalized English.
 Return candidates=[] if evidence is inadequate. Never invent a source or date.`,
     {now:new Date().toISOString(),query,history,research:outputText(search),source_catalog:catalogEntries},object({candidates:array(candidateSchema)}));
-  if (!Array.isArray(discovery.candidates) || discovery.candidates.length!==1) throw new Halt('No suitable event');
-  const {source_ids,...event}=discovery.candidates[0];
-  const selected={...event,source_urls:selectDiscoveredSources(source_ids,catalog)}, eventTime=Date.parse(selected.event_at);
-  if (!selected.event_key?.trim() || selected.event_key.length<8 || selected.event_key.length>300 ||
-      !selected.topic?.trim() || selected.topic.length>600 || !Number.isFinite(eventTime) ||
-      eventTime<now()-c.age || eventTime>now()+600000) throw new Halt('Invalid or stale event');
-  selected.event_key=normalized(selected.event_key);
-  if (history.some(h=>normalized(h.event_key)===selected.event_key || normalized(h.topic)===normalized(selected.topic)))
-    throw new Halt('Duplicate event');
-  if (history.length) {
-    const comparison = await llm(c,store,'Compare the underlying event across languages and paraphrases. same_event=true if it substantially repeats a history event.',
-      {candidate:selected,history},object({same_event:bool}));
-    if (comparison.same_event) throw new Halt('Duplicate underlying event');
-  }
-  const urls=selected.source_urls;
+  await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('research_candidate_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    JSON.stringify({at:now(),candidates:discovery.candidates,catalog:catalogEntries.map(({source_id,url,title,published_at,publisher_group})=>
+      ({source_id,url,title,published_at,publisher_group}))})).run();
+  const candidates=rankedCandidates(discovery.candidates,catalog,c,history);
   stage='source-fetch';
-  await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('research_source_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-    JSON.stringify({at:now(),selection:selected})).run();
-  const collected=[];
-  const failures=[];
-  for (const url of urls) {
-    try {
-      const source=await fetchSource(url,c);
-      if(!source.publication) {
-        const publication=feedPublication(search.articles,url,source.url);
-        if(publication)source.publication=publication;
+  const cache=new Map(),attempts=[];
+  let selected,sources;
+  for(const candidate of candidates) {
+    const collected=[],failures=[];
+    for(const url of candidate.source_urls) {
+      if(!cache.has(url) && cache.size<8) {
+        try {
+          const source=await fetchSource(url,c);
+          if(!source.publication)source.publication=feedPublication(search.articles,url,source.url);
+          cache.set(url,{source});
+        }catch(error){cache.set(url,{error:error instanceof Halt?error.message:'Source network failure'});}
       }
-      if (!collected.some(s=>s.url===source.url)) collected.push(source);
-    } catch (error) {
-      failures.push({url,error:error instanceof Halt?error.message:'Source network failure'});
-      // Do not replace failed sources with model memory or bypass publisher restrictions.
-      if (!(error instanceof Halt) && error?.name!=='TimeoutError') console.warn('Source fetch unavailable');
+      const cached=cache.get(url);
+      if(cached?.source) {
+        if(!collected.some(s=>s.url===cached.source.url))collected.push(cached.source);
+      } else failures.push({url,error:cached?.error || 'Source probe limit reached'});
     }
+    attempts.push({selection:candidate,failures,
+      sources:collected.map(({url,publication,text})=>({url,publication,text_length:text.length}))});
+    try {sources=requireDatedSources(collected,c);selected=candidate;break;}
+    catch(error){if(!(error instanceof Halt))throw error;}
   }
   await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('research_source_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-    JSON.stringify({at:now(),selection:selected,failures,
-      sources:collected.map(({url,publication,text})=>({url,publication,text_length:text.length}))})).run();
-  const sources=requireDatedSources(collected,c);
+    JSON.stringify({at:now(),selection:selected || null,attempts})).run();
+  if(!selected)throw new Halt('No candidate has two readable fresh publisher-dated sources');
   const excerpts=excerptCatalog(sources);
   stage='verification';
-  const assessment=await llm(c,store,`Assess ALL sources by numeric source_id (the source's id field). Identify publication
+  const assessment=await llm(c,store,`Independently compare the underlying event with history across languages and
+paraphrases. Set duplicate_event=true if it substantially repeats a history event; do not write a draft
+for that event. Assess ALL sources by numeric source_id (the source's id field). Identify publication
 dates from source content; use publication.published_at when publisher metadata supplies it.
 Do not confuse dateModified or the event date with publication time. Do not guess.
 For QUICK use at most 3 central claims; for other formats use at most 6. Do not extract unrelated
@@ -284,7 +306,8 @@ Do not write or reconstruct quotations; the program resolves the IDs to the actu
 Identify syndication/shared original announcements. Respect
 operator origin mappings. verified requires at least two independent origin groups; otherwise
 attribute and explicitly mark uncertainty. Withhold for unknown dates or weak central evidence.`,
-    {candidate:selected,format,sources:excerpts,origin_groups:c.origins,now:new Date().toISOString()},verificationSchema);
+    {candidate:selected,history,format,sources:excerpts,origin_groups:c.origins,now:new Date().toISOString()},verificationSchema);
+  if(assessment.duplicate_event)throw new Halt('Duplicate underlying event');
   const packet=resolveEvidence(assessment,excerpts);
   // Prefer timestamp evidence actually retrieved from the publisher over model date extraction.
   for(const assessment of packet.sources) {

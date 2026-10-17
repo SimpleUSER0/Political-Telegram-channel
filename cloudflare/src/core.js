@@ -31,7 +31,7 @@ export function config(env) {
   const discovery=env.DISCOVERY_MODE || 'web_search';
   if(!['web_search','feeds'].includes(discovery))throw new Halt('Invalid DISCOVERY_MODE');
   const feeds=[...new Set((env.SOURCE_FEEDS || 'bbc-world,guardian-world,civil-ge').split(',').map(s=>s.trim()).filter(Boolean))];
-  if(discovery==='feeds' && (feeds.length<2 || feeds.some(f=>!['bbc-world','guardian-world','civil-ge'].includes(f))))
+  if(discovery==='feeds' && (feeds.length<2 || feeds.some(f=>!['bbc-world','guardian-world','civil-ge','netgazeti'].includes(f))))
     throw new Halt('SOURCE_FEEDS requires at least two known publisher feeds');
   const channel = String(env.CHANNEL_ID || '');
   if (['@cifruli_era', '@digitalera101'].includes(channel.toLowerCase()))
@@ -160,6 +160,8 @@ export function validateArticle(a, packet, sources) {
   if (required.some(i => !a.source_ids.includes(i))) throw new Halt('Missing evidence source link');
 }
 export function validatePacket(packet, sources, c, time = now()) {
+  if(packet?.duplicate_event===true)throw new Halt('Duplicate underlying event');
+  if(packet?.contradictions?.length)throw new Halt('Conflicting evidence; draft withheld');
   if (!packet?.publishable || !packet.claims?.length || !Array.isArray(packet.sources))
     throw new Halt('Insufficient evidence; draft withheld');
   const assessments = new Map(packet.sources.map(s => [s.source_id, s]));

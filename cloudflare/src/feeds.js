@@ -5,8 +5,9 @@ export const FEEDS=Object.freeze({
   'bbc-world':'https://feeds.bbci.co.uk/news/world/rss.xml',
   'guardian-world':'https://www.theguardian.com/world/rss',
   'civil-ge':'https://civil.ge/feed',
+  'netgazeti':'https://netgazeti.ge/feed/',
 });
-const PUBLISHERS={'bbc-world':['bbc.co.uk','bbc.com'],'guardian-world':['theguardian.com'],'civil-ge':['civil.ge']};
+const PUBLISHERS={'bbc-world':['bbc.co.uk','bbc.com'],'guardian-world':['theguardian.com'],'civil-ge':['civil.ge'],'netgazeti':['netgazeti.ge']};
 export function feedPublication(entries,discoveredUrl,finalUrl) {
   const entry=entries?.find(e=>e.url===discoveredUrl);
   if(!entry || entry.feed_url!==FEEDS[entry.feed])return null;
