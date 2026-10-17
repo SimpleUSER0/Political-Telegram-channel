@@ -6,6 +6,7 @@ import {discoverFeeds,feedImage,feedPublication} from './feeds.js';
 import {editorialCandidates,polishGeorgianArticle} from './editorial.js';
 import {GEORGIAN_STYLE_EXAMPLES,georgianQualityIssues,requireGeorgianQuality} from './georgian-quality.js';
 import {editionDetails,rankEditorialEntries} from './news-plan.js';
+import {lookupRequestedArticles,rankRequestedArticles} from './topic-search.js';
 
 const EDITORIAL = `You are the independent Georgian-language WORLD FOCUS political newsroom.
 Cover world politics, diplomacy, geopolitical rivalries, security and consequential political
@@ -335,17 +336,24 @@ export async function generate(c,store,query,format,edition='night',preferredUrl
   const modelConfig=manual?{...c,manualTopic:true}:c;
   // Reserve the run only when the remaining daily call budget can cover an
   // entire three/four-call workflow; avoid a predictable partial paid run.
-  const requiredCalls=usingFeeds?2:directSearch?5:4;
+  const requiredCalls=usingFeeds?2:directSearch?4:4;
   await store.requireCallCapacity(c.dailyCalls,requiredCalls);
   await store.reserve('runs',c.dailyRuns);
   stage='discovery';
-  const search = usingFeeds?await discoverFeeds(c,query):await llm(modelConfig,store,`Find credible, dated, REAL publisher articles DIRECTLY about the owner's requested topic.
-The user may ask about ANY subject, geographic area, scientific question, person or event.
-Do not switch to general political news, another country or a loosely related story.
-Prefer a specific article with a publisher photograph. If recent relevant stories are not
-available, be explicit about the lack of evidence. Only return publisher URLs actually
-provided by Google Search grounding, never invent a URL or an article.
-Use these publishers when possible; the strict URL allowlist is enforced separately.`,
+  let searchTerms=null;
+  if(directSearch){
+    stage='topic-terms';
+    const terms=await llm(modelConfig,store,`Return 2-6 concise ENGLISH keywords for searching
+news publishers for the user's EXACT requested subject. Preserve names and locations;
+do not substitute a broader region or invent an event. Output one JSON string field
+'terms', no unrelated concepts, no instructions and no punctuation operators.`,
+      {query},object({terms:s}));
+    searchTerms=terms.terms;
+  }
+  const search = directSearch?await lookupRequestedArticles(c,searchTerms):
+    usingFeeds?await discoverFeeds(c,query):await llm(modelConfig,store,`Find specific
+publisher articles directly about the requested subject using trustworthy sources.
+Never substitute another subject or invent a source URL.`,
     {now:new Date().toISOString(),query,history},null,true);
   const allowed = retrievedUrls(search,c.domains);
   if (!allowed.size) throw new Halt('Search returned no admissible publisher article URLs');
@@ -375,7 +383,10 @@ Use these publishers when possible; the strict URL allowlist is enforced separat
   if(!scopedEntries.length)throw new Halt('Requested breaking article is not in the current trusted publisher feed');
   const editorialCatalog=scopedEntries.map((entry,source_id)=>({...entry,source_id}));
   stage='candidate';
-  const discovery = usingFeeds?{candidates:publisherCandidates(editorialCatalog,history,3,edition)}:
+  const topicMatches=directSearch?rankRequestedArticles(editorialCatalog,searchTerms,3):[];
+  if(directSearch && !topicMatches.length)
+    throw new Halt('No publisher article in the accessible news index matches the requested topic');
+  const discovery = (usingFeeds||directSearch)?{candidates:publisherCandidates(directSearch?topicMatches:editorialCatalog,history,3,edition)}:
     await llm(modelConfig,store,`Select up to THREE credible, dated publisher stories CENTRAL to the owner's EXACT topic. For daily scheduled briefings select important political/geopolitical events.
 Follow the owner's /news or /post topic strictly when specific; for a broad daily-news query prefer
 elections, legislation, governments, diplomacy, security, wars, sanctions, protests and major
@@ -441,6 +452,8 @@ Return [] only if no recent relevant article exists in the catalog.`,
       lastEditorialError=attempt.rejected;
       continue;
     }
+    if(directSearch && primary.publication?.published_at)
+      candidate.event_at=primary.publication.published_at;
     const sources=[{...primary,id:0}];
     if(directSearch){
       // An LLM-selected search snippet is not enough: the real fetched publisher
