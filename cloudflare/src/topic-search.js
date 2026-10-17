@@ -29,10 +29,11 @@ export function parseTopicIndex(response,domains) {
     if(title.length<7)continue;
     // First seen is NOT publisher publication time; use it for ranking only.
     const rawSeen=String(record.seendate||'');
-    const date=/^\d{14}$/.test(rawSeen)?
-      Date.UTC(Number(rawSeen.slice(0,4)),Number(rawSeen.slice(4,6))-1,
-        Number(rawSeen.slice(6,8)),Number(rawSeen.slice(8,10)),
-        Number(rawSeen.slice(10,12)),Number(rawSeen.slice(12,14))):
+    const digits=rawSeen.replace(/^([0-9]{8})T([0-9]{6})Z$/,'$1$2');
+    const date=/^\d{14}$/.test(digits)?
+      Date.UTC(Number(digits.slice(0,4)),Number(digits.slice(4,6))-1,
+        Number(digits.slice(6,8)),Number(digits.slice(8,10)),
+        Number(digits.slice(10,12)),Number(digits.slice(12,14))):
       Date.parse(rawSeen);
     if(!Number.isFinite(date))continue;
     seen.add(url);
