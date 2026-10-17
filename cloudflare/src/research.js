@@ -231,6 +231,23 @@ export function rankedCandidates(candidates,catalog,c,history,time=now()) {
   return result;
 }
 
+// RSS publishers supply actual titles, URLs and dates: never ask an LLM to invent
+// the event metadata or pair a real source ID with an unrelated event.
+export function publisherCandidates(entries,history=[],max=3) {
+  const hash=value=>{
+    let h=2166136261;
+    for(let i=0;i<value.length;i++)h=Math.imul(h^value.charCodeAt(i),16777619);
+    return (h>>>0).toString(16);
+  };
+  return entries.filter(e=>e.url && e.title && Number.isFinite(Date.parse(e.published_at)))
+    .sort((a,b)=>Date.parse(b.published_at)-Date.parse(a.published_at) ||
+      Number(Boolean(b.has_publisher_image))-Number(Boolean(a.has_publisher_image)))
+    .map(e=>({event_key:'rss_'+hash(e.url)+'_'+new Date(e.published_at).toISOString().slice(0,10),
+      topic:e.title,event_at:e.published_at,source_ids:[e.source_id]}))
+    .filter(e=>!history.some(h=>normalized(h.event_key)===normalized(e.event_key)))
+    .slice(0,max);
+}
+
 export function excerptCatalog(sources,focus='') {
   return sources.map(({text,...source})=>{
     const excerpts=[],canonical=normalized(text);
@@ -310,7 +327,7 @@ export async function generate(c,store,query,format) {
   const history = await store.history();
   // Reserve the run only when the remaining daily call budget can cover an
   // entire three/four-call workflow; avoid a predictable partial paid run.
-  const requiredCalls=c.discovery==='feeds'?3:4;
+  const requiredCalls=c.discovery==='feeds'?2:4;
   await store.requireCallCapacity(c.dailyCalls,requiredCalls);
   await store.reserve('runs',c.dailyRuns);
   stage='discovery';
@@ -344,7 +361,8 @@ publication dates. Avoid all history events, including paraphrases. No suitable 
   if(!relevantEntries.length)throw new Halt('No recent relevant political news in accessible publisher feeds for this topic');
   const editorialCatalog=relevantEntries.map((entry,source_id)=>({...entry,source_id}));
   stage='candidate';
-  const discovery = await llm(c,store,`Act as an editor selecting up to THREE different, consequential CURRENT POLITICAL stories.
+  const discovery = c.discovery==='feeds'?{candidates:publisherCandidates(editorialCatalog,history)}:
+    await llm(c,store,`Act as an editor selecting up to THREE different, consequential CURRENT POLITICAL stories.
 Follow the owner's /news topic strictly when specific; for a broad daily-news query prefer
 elections, legislation, governments, diplomacy, security, wars, sanctions, protests and major
 policy decisions, including Georgian and international developments. Do NOT prioritize celebrity,
