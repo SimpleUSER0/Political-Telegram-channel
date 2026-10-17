@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {publisherGroup,rankedCandidates,selectDiscoveredSources} from '../src/research.js';
+import {publisherGroup,publisherCandidates,rankedCandidates,selectDiscoveredSources} from '../src/research.js';
 
 const catalog=[
   'https://www.bbc.co.uk/news/articles/a?at_medium=RSS&at_campaign=rss',
@@ -43,4 +43,19 @@ test('one publisher is allowed but duplicates and invalid IDs still fail',()=>{
     [{event_key:event.event_key,topic:'An earlier title'}]),/No eligible new event/);
   assert.throws(()=>rankedCandidates([{...event,source_ids:[0,99]}],urls,c,[]),/No eligible new event/);
   assert.throws(()=>rankedCandidates(Array(4).fill({...event,source_ids:[0,2]}),urls,c,[]),/Invalid candidate list/);
+});
+
+test('RSS candidates use only genuine publisher title, date and source ID',()=>{
+  const date='2026-10-17T12:00:00Z';
+  const sources=[{url:'https://www.bbc.co.uk/news/articles/china-diplomacy',
+    title:'China and EU hold diplomatic summit',published_at:date,source_id:0},
+    {url:'https://www.theguardian.com/world/2026/oct/17/taiwan-security',
+      title:'Taiwan security talks in Asia',published_at:'2026-10-17T13:00:00Z',source_id:1}];
+  const result=publisherCandidates(sources);
+  assert.equal(result[0].topic,sources[1].title);
+  assert.equal(result[1].topic,sources[0].title);
+  assert.deepEqual(result.map(e=>e.source_ids),[[1],[0]]);
+  assert.match(result[0].event_key,/^rss_[a-z0-9]+_2026-10-17$/);
+  const same=publisherCandidates(sources,[{event_key:result[0].event_key}]);
+  assert.deepEqual(same.map(e=>e.topic),[sources[0].title]);
 });
