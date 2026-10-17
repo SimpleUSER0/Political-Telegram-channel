@@ -1,4 +1,41 @@
-# Delivery status — 2026-10-16
+# Delivery status — 2026-10-17
+
+## Current deployment: Cloudflare + Gemini
+
+The active implementation is the JavaScript Worker with its independent D1 database.
+The older Python/Railway handoff below is historical, not the current activation checklist.
+
+- Worker: `political-telegram-channel`.
+- Bot: `@Msofliofokusibot`; political channel: `@Msofliofokusi`.
+- Runtime: https://political-telegram-channel.irakli-kardava0.workers.dev
+- Live `/ready` returned `ready:true`, no missing settings and a fresh cron heartbeat.
+  This reports configuration/cron readiness; it does **not** prove Telegram posting permission.
+- Gemini structured access and Telegram webhook registration have successful diagnostic records.
+- Scheduled research is enabled at 09:00 and 18:00 Asia/Tbilisi. Posts require owner approval.
+- Existing configured daily caps are 10 runs and 24 model calls. Failed attempts consume budget;
+  these caps were not raised during this handoff.
+- PR #12 merged as `baa307c5c6a084e2cccf5ab5047d936a49eed122`.
+  Deployed source inspection confirms ranked candidates, Netgazeti and semantic duplicate checks.
+- All 79 Worker tests passed locally. GitHub run 39030090224 passed the Worker, SQLite,
+  PostgreSQL and container jobs for the reviewed PR head.
+
+## Remaining live acceptance gates
+
+1. A fresh infrastructure diagnostic at 12:07 UTC confirms `can_post_messages=true`
+   for the expected bot and channel. Earlier missing-permission errors are historical.
+2. Research may correctly stop when it cannot establish independent corroboration. Recent
+   attempts stopped for missing corroboration or no qualifying candidate. A passing unit test
+   is not proof that every live topic will yield a publishable draft. Do not weaken the checks
+   or label unsupported claims verified to force output.
+3. Request `/news` in the bot, review the source links and approve a
+   pending draft. Confirm one channel post and no duplicate on a repeated button press.
+   A historical `published` database row alone is not fresh end-to-end acceptance evidence.
+
+No channel post was sent as part of this handoff. Publication remains owner-controlled.
+
+---
+
+## Historical Python/Railway handoff (2026-10-16)
 
 ## Completed locally
 
