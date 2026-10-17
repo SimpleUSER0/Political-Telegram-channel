@@ -3,7 +3,7 @@ import {Halt, articleText, missing, normalized, now, outputText, readText, retri
 import {geminiCall} from './gemini.js';
 import {workersAICall} from './workers-ai.js';
 import {discoverFeeds,feedImage,feedPublication} from './feeds.js';
-import {editorialCandidates} from './editorial.js';
+import {editorialCandidates,polishGeorgianArticle} from './editorial.js';
 
 const EDITORIAL = `You are the independent Georgian-language WORLD FOCUS political newsroom.
 Cover world politics, diplomacy, geopolitical rivalries, security and consequential political
@@ -456,13 +456,18 @@ factual contradictions, unsupported assertions, or repetition without material n
       }
       validatePacket(packet,sources,c);
       stage='draft';
-      const article=await llm(c,store,`Write a natural, precise Georgian political Telegram post based EXCLUSIVELY on the
+      const generatedArticle=await llm(c,store,`Write a natural, precise Georgian political Telegram post based EXCLUSIVELY on the
 evidence packet. Strong informative headline, direct news lead, 2-3 short coherent paragraphs;
 2-4 useful facts explaining what happened, who is involved and why it matters.
 Keep political claims explicitly attributed to the publisher or official speaker. Treat
 disagreements and allegations neutrally. Do not write opinion or generic predictions.
 Avoid robotic phrasing, repeated background, melodrama, clickbait, concluding questions
-and unnecessary emojis (0-1). Use names, grammar and Georgian orthography carefully.
+and unnecessary emojis (0-1). Write idiomatic NATIVE Georgian, not word-for-word English
+translations. Use correct Georgian cases and short active sentences. Never say 'ეუ' when
+referring to the European Union: use 'ევროკავშირი' or 'ევროკავშირის'. Prefer
+'ელექტრომობილები' over 'ელექტრომანქანები', 'ბრიტანეთის' over 'ბრიტანიის',
+'ეწინააღმდეგება' over 'მოწინააღმდეგობას უწყობს', and 'განიხილავს შესაძლებლობას'
+over 'საქმიანობს შესაძლებლობაზე'. Do not change facts or add interpretation.
 Every factual statement must map to claim_ids; include its supporting source_id.
 Never put source URLs or labels in the text: Telegram adds one source-button separately.
 Title + body MUST fit within 950 UTF-16 code units (Telegram photo caption).
@@ -470,6 +475,7 @@ Only use the photo already retrieved from the source; never generate an image.
 Format FLASH is brief, QUICK concise, STANDARD compact with context, DEEP as detailed
 as the photo caption permits. Do not append metadata, pseudo-citations or numbered IDs.`,
         {verification:packet,format},articleSchema);
+      const article=polishGeorgianArticle(generatedArticle);
       stage='source-backed-draft';
       validateArticle(article,packet,sources);
       if(articleText(article).length>950)throw new Halt('Draft exceeds the photo caption limit');
