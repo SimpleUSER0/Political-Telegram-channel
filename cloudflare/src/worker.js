@@ -350,6 +350,29 @@ export async function drain(c,store,kind,limit=1) {
             JSON.stringify({at:now(),owner_message_id:sent.message_id,photo:Boolean(sent.photo?.length),source_buttons:1})).run();
           await store.finish(job);continue;
         }
+        if(payload.action==='diagnose_topic_sources') {
+          const query=String(payload.query||'Japan politics').slice(0,100);
+          const targets=[
+            ['gdelt','https://api.gdeltproject.org/api/v2/doc/doc?query='+encodeURIComponent(query)+'&mode=artlist&format=json&maxrecords=5&timespan=2d'],
+            ['guardian','https://content.guardianapis.com/search?api-key=test&q='+encodeURIComponent(query)+'&page-size=3'],
+            ['bing','https://www.bing.com/news/search?q='+encodeURIComponent(query)+'&format=rss'],
+            ['google-news','https://news.google.com/rss/search?q='+encodeURIComponent(query)+'&hl=en-US&gl=US&ceid=US:en']
+          ];
+          const results=await Promise.all(targets.map(async ([name,url])=>{
+            try{
+              const res=await fetch(url,{redirect:'follow',signal:AbortSignal.timeout(7500)});
+              const body=(await res.text()).slice(0,4000);
+              return {name,http:res.status,content_type:res.headers.get('content-type'),
+                length:body.length,valid_rss:/<rss[\s>]/i.test(body),
+                rss_items:(body.match(/<item(?:\s|>)/gi)||[]).length,
+                has_articles:/"articles"\s*:/i.test(body),has_results:/"results"\s*:/i.test(body),
+                start:body.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').slice(0,160)};
+            }catch(e){return {name,error:String(e?.message||e).slice(0,120)};}
+          }));
+          await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('topic_sources_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            JSON.stringify({at:now(),query,results})).run();
+          await store.finish(job);continue;
+        }
         if(payload.action==='probe_any_topic_search') {
           const query=String(payload.query||'').trim();
           if(query.length<3 || query.length>120)throw new Halt('Invalid test topic');
