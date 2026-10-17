@@ -2,6 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {config,missing} from '../src/core.js';
 import {llm} from '../src/research.js';
+import {projectSchemaFields} from '../src/workers-ai.js';
 import {fixture} from './helpers.js';
 
 const schema={type:'object',properties:{title:{type:'string'},
@@ -47,4 +48,25 @@ test('Workers AI cannot invent grounded search and fails early without binding',
   assert.ok(missing(c,true).includes('Cloudflare Workers AI binding AI'));
   c.env.AI={run:async()=>({response:'{}'})};
   await assert.rejects(llm(c,store,'Web search',{},null,true),/grounded web search/);
+});
+
+test('Qwen extra commentary fields are stripped without weakening validation',()=>{
+  const nested={type:'object',properties:{facts:{type:'array',items:{type:'object',
+    properties:{text:{type:'string'},confirmed:{type:'boolean'}},
+    required:['text','confirmed'],additionalProperties:false}}},
+    required:['facts'],additionalProperties:false};
+  const payload={facts:[{text:'Diplomatic talks occurred',confirmed:true,
+    confidence:0.9,comment:'unneeded'}],debug:'model-added note'};
+  assert.deepEqual(projectSchemaFields(payload,nested),{
+    facts:[{text:'Diplomatic talks occurred',confirmed:true}]});
+  assert.deepEqual(projectSchemaFields({facts:[{confirmed:true,extra:5}]},nested),
+    {facts:[{confirmed:true}]});
+});
+test('Cloudflare model output with extra fields validates when required fields remain',async()=>{
+  const {e,store}=await fixture();
+  e.AI={run:async()=>({choices:[{message:{content:'{"title":"სამიტი გაიმართა","accepted":true,"analysis":"not for publication"}'},finish_reason:'stop'}]})};
+  const c=config({...e,AI_PROVIDER:'workers-ai',DISCOVERY_MODE:'feeds'});
+  assert.deepEqual(await llm(c,store,'Draft',{},schema),{title:'სამიტი გაიმართა',accepted:true});
+  e.AI.run=async()=>({choices:[{message:{content:'{"accepted":true,"analysis":"missing required title"}'},finish_reason:'stop'}]});
+  await assert.rejects(llm(c,store,'Draft',{},schema),/Model JSON missing property/);
 });
