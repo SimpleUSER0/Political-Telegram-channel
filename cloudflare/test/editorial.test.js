@@ -18,7 +18,7 @@ test('World Focus interprets country requests as POLITICAL scope, not any countr
   assert.equal(editorialTopic('მსოფლიოს ახალი ამბები'),null);
 });
 test('topic-specific RSS expands publishers rather than replacing global or Georgian feeds',()=>{
-  assert.deepEqual(editorialFeeds('იაპონიაზე',['bbc-world']),['bbc-world','bbc-asia','guardian-japan']);
+  assert.deepEqual(editorialFeeds('იაპონიაზე',['bbc-world']),['bbc-world','bbc-asia','guardian-japan','japan-times']);
   assert.deepEqual(editorialFeeds('ჩინეთი',['bbc-world','civil-ge']),
     ['bbc-world','civil-ge','bbc-asia','guardian-china']);
   assert.deepEqual(editorialFeeds('აშშ',['bbc-world']),['bbc-world','guardian-us-politics']);
