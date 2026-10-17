@@ -262,6 +262,9 @@ Copy the integer IDs; do not write, reconstruct or canonicalize URLs. Never repe
 event_key must identify the precise event and UTC date, in normalized English.
 Return candidates=[] if evidence is inadequate. Never invent a source or date.`,
     {now:new Date().toISOString(),query,history,research:outputText(search),source_catalog:catalogEntries},object({candidates:array(candidateSchema)}));
+  await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('research_candidate_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+    JSON.stringify({at:now(),candidates:discovery.candidates,catalog:catalogEntries.map(({source_id,url,title,published_at,publisher_group})=>
+      ({source_id,url,title,published_at,publisher_group}))})).run();
   const candidates=rankedCandidates(discovery.candidates,catalog,c,history);
   stage='source-fetch';
   const cache=new Map(),attempts=[];

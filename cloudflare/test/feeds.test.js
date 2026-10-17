@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {config} from '../src/core.js';
-import {discoverFeeds,parseFeed} from '../src/feeds.js';
+import {discoverFeeds,feedPublication,parseFeed} from '../src/feeds.js';
 
 const settings=()=>config({SOURCE_DOMAINS:'bbc.co.uk,theguardian.com,civil.ge',DISCOVERY_MODE:'feeds'});
 const item=(url,date=new Date().toUTCString())=>`<item><title><![CDATA[Meeting &amp; diplomacy]]></title><link>${url}</link><pubDate>${date}</pubDate><description>&lt;b&gt;Context&lt;/b&gt;</description></item>`;
@@ -24,4 +24,11 @@ test('feed mode is an explicit configuration choice and rejects unknown feed tar
   assert.equal(config({}).discovery,'web_search');
   assert.throws(()=>config({DISCOVERY_MODE:'feeds',SOURCE_FEEDS:'bbc-world,internal-metadata'}),/known publisher feeds/);
   assert.throws(()=>config({DISCOVERY_MODE:'feeds',SOURCE_FEEDS:'bbc-world'}),/at least two/);
+});
+test('Georgian publisher feed dates remain tied to their own discovered articles',()=>{
+  const c=config({SOURCE_DOMAINS:'civil.ge,netgazeti.ge',DISCOVERY_MODE:'feeds',SOURCE_FEEDS:'civil-ge,netgazeti'});
+  const url='https://netgazeti.ge/news/123456/',[article]=parseFeed('<rss>'+item(url)+'</rss>',c);
+  const entry={...article,feed:'netgazeti',feed_url:'https://netgazeti.ge/feed/'};
+  assert.equal(feedPublication([entry],url,url).published_at,article.published_at);
+  assert.equal(feedPublication([entry],url,'https://civil.ge/news/123456'),null);
 });
