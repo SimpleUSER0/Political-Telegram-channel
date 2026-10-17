@@ -51,7 +51,7 @@ export function rankRequestedArticles(articles,searchTerms,max=3) {
     const title=String(article.title||'').toLowerCase();
     const matched=tokens.filter(word=>title.includes(word)).length;
     return {article,matched};
-  }).filter(x=>x.matched>0).sort((a,b)=>b.matched-a.matched||
+  }).filter(x=>x.matched>0 || x.article.feed==='gdelt-index').sort((a,b)=>b.matched-a.matched||
     Date.parse(b.article.published_at)-Date.parse(a.article.published_at))
     .slice(0,max).map(x=>x.article);
 }
