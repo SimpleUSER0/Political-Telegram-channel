@@ -11,13 +11,14 @@ export const FEEDS=Object.freeze({
   'bbc-middle-east':'https://feeds.bbci.co.uk/news/world/middle_east/rss.xml',
   'guardian-china':'https://www.theguardian.com/world/china/rss',
   'guardian-japan':'https://www.theguardian.com/world/japan/rss',
+  'japan-times':'https://www.japantimes.co.jp/news/feed/',
   'guardian-us-politics':'https://www.theguardian.com/us-news/us-politics/rss',
   'guardian-middle-east':'https://www.theguardian.com/world/middleeast/rss',
   'guardian-ukraine':'https://www.theguardian.com/world/ukraine/rss',
 });
 const PUBLISHERS={'bbc-world':['bbc.co.uk','bbc.com'],'guardian-world':['theguardian.com'],'civil-ge':['civil.ge'],'netgazeti':['netgazeti.ge'],
   'bbc-asia':['bbc.co.uk','bbc.com'],'bbc-middle-east':['bbc.co.uk','bbc.com'],
-  'guardian-china':['theguardian.com'],'guardian-japan':['theguardian.com'],'guardian-us-politics':['theguardian.com'],
+  'guardian-china':['theguardian.com'],'guardian-japan':['theguardian.com'],'japan-times':['japantimes.co.jp'],'guardian-us-politics':['theguardian.com'],
   'guardian-middle-east':['theguardian.com'],'guardian-ukraine':['theguardian.com']};
 export function feedPublication(entries,discoveredUrl,finalUrl) {
   const entry=entries?.find(e=>e.url===discoveredUrl);
@@ -46,6 +47,7 @@ const IMAGE_DOMAINS={
   'bbc-middle-east':['bbc.co.uk','bbc.com','ichef.bbci.co.uk'],
   'guardian-china':['theguardian.com','i.guim.co.uk','media.guim.co.uk'],
   'guardian-japan':['theguardian.com','i.guim.co.uk','media.guim.co.uk'],
+  'japan-times':['japantimes.co.jp','cdn-japantimes.com'],
   'guardian-us-politics':['theguardian.com','i.guim.co.uk','media.guim.co.uk'],
   'guardian-middle-east':['theguardian.com','i.guim.co.uk','media.guim.co.uk'],
   'guardian-ukraine':['theguardian.com','i.guim.co.uk','media.guim.co.uk'],
