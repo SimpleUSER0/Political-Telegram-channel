@@ -311,26 +311,50 @@ publication dates. Avoid all history events, including paraphrases. No suitable 
     {now:new Date().toISOString(),query,history},null,true);
   const allowed = retrievedUrls(search,c.domains);
   if (!allowed.size) throw new Halt('Search returned no admissible publisher article URLs');
-  const catalog=[...allowed];
-  const catalogEntries=catalog.map((url,source_id)=>({
-    ...((search.articles || []).find(article=>article.url===url) || {}),source_id,url,publisher_group:publisherGroup(url,c),
-  }));
+  // Bound model input and fairly represent every configured RSS publisher.
+  const selectedUrls=[],counts=new Map();
+  for(const story of search.articles || []) {
+    if(!allowed.has(story.url))continue;
+    const publisher=story.feed || publisherGroup(story.url,c);
+    if((counts.get(publisher)||0)>=12)continue;
+    counts.set(publisher,(counts.get(publisher)||0)+1);
+    selectedUrls.push(story.url);
+    if(selectedUrls.length>=60)break;
+  }
+  const catalog=selectedUrls.length?selectedUrls:[...allowed].slice(0,60);
+  const articleIndex=new Map((search.articles||[]).map(a=>[a.url,a]));
+  const catalogEntries=catalog.map((url,source_id)=>{
+    const item=articleIndex.get(url);
+    return {source_id,url,publisher_group:publisherGroup(url,c),
+      ...(item?{title:item.title.slice(0,180),summary:(item.summary||'').slice(0,220),
+        published_at:item.published_at}:{}),
+    };
+  });
   stage='candidate';
-  const discovery = await llm(c,store,`Return up to THREE ranked candidates for DIFFERENT new political events.
-Choose 1-3 source_ids from the provided source_catalog covering the SAME event. ONE reliable
-publisher article is sufficient; do NOT require another publisher to report the same event.
-Prefer standalone news articles; avoid /live/ URLs, opinion and rolling background briefings.
-Copy the integer IDs; do not write, reconstruct or canonicalize URLs. Never repeat any history event.
-event_key must identify the precise event and UTC date, in normalized English.
-Return candidates=[] only when no relevant, recently published event can be supported by the listed publisher links. Never invent a source or date.`,
-    {now:new Date().toISOString(),query,history,research:outputText(search),source_catalog:catalogEntries},object({candidates:array(candidateSchema)}));
+  const discovery = await llm(c,store,`Act as an editor selecting up to THREE different, consequential CURRENT POLITICAL stories.
+Follow the owner's /news topic strictly when specific; for a broad daily-news query prefer
+elections, legislation, governments, diplomacy, security, wars, sanctions, protests and major
+policy decisions, including Georgian and international developments. Do NOT prioritize celebrity,
+health, lifestyle, sports, entertainment, or a leader's private affairs without political relevance.
+Order by actual news value and recency, not feed order or publisher prominence.
+Choose 1-2 existing source_ids for each event; ONE credible publisher is fully sufficient.
+Prefer an actual article rather than live indexes or opinion. Do not reconstruct URLs.
+Only use provided source_catalog entries. event_key must distinguish the actual event, development
+and date; a substantially NEW announcement/action on a previously covered issue IS eligible,
+but a rephrasing of the same underlying event is not. Do not invent timestamps; use the
+publisher's known publication time if the event time is unavailable.
+If the first candidate lacks a usable publisher photograph, other candidates provide fallback.
+Return [] only if no recent relevant article exists in the catalog.`,
+    {now:new Date().toISOString(),query,history,
+      research:c.discovery==='feeds'?'Publisher RSS article metadata is in source_catalog':outputText(search).slice(0,3000),
+      source_catalog:catalogEntries},object({candidates:array(candidateSchema)}));
   await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('research_candidate_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
     JSON.stringify({at:now(),candidates:discovery.candidates,catalog:catalogEntries.map(({source_id,url,title,published_at,publisher_group})=>
       ({source_id,url,title,published_at,publisher_group}))})).run();
   const candidates=rankedCandidates(discovery.candidates,catalog,c,history);
   stage='source-fetch';
   const cache=new Map(),attempts=[];
-  let selected,sources;
+  let lastEditorialError='No suitable news story with a publisher photo was found';
   for(const candidate of candidates) {
     const collected=[],failures=[];
     for(const url of candidate.source_urls) {
@@ -339,72 +363,95 @@ Return candidates=[] only when no relevant, recently published event can be supp
           const source=await fetchSource(url,c);
           if(!source.publication)source.publication=feedPublication(search.articles,url,source.url);
           cache.set(url,{source});
-        }catch(error){cache.set(url,{error:error instanceof Halt?error.message:'Source network failure'});}
+        } catch(error) {
+          cache.set(url,{error:error instanceof Halt?error.message:'Source network failure'});
+        }
       }
       const cached=cache.get(url);
       if(cached?.source) {
         if(!collected.some(s=>s.url===cached.source.url))collected.push(cached.source);
       } else failures.push({url,error:cached?.error || 'Source probe limit reached'});
     }
-    attempts.push({selection:candidate,failures,
-      sources:collected.map(({url,publication,text})=>({url,publication,text_length:text.length}))});
-    try {sources=requireDatedSources(collected,c);selected=candidate;break;}
-    catch(error){if(!(error instanceof Halt))throw error;}
+    const attempt={selection:candidate,failures,
+      sources:collected.map(({url,publication,text,image})=>({url,publication,text_length:text.length,has_photo:Boolean(image)}))};
+    attempts.push(attempt);
+    let dated;
+    try {
+      dated=requireDatedSources(collected,c);
+    } catch(error) {
+      if(!(error instanceof Halt))throw error;
+      attempt.rejected=error.message;lastEditorialError=error.message;continue;
+    }
+    // Never give the owner a caption without a real publisher-supplied image.
+    // Prefer just ONE dated and illustrated reputable article for concise attribution.
+    const primary=dated.find(source=>source.image);
+    if(!primary) {
+      attempt.rejected='No usable publisher photo';
+      lastEditorialError=attempt.rejected;
+      continue;
+    }
+    const sources=[{...primary,id:0}];
+    await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('research_source_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+      JSON.stringify({at:now(),selection:candidate,attempts})).run();
+    try {
+      const excerpts=excerptCatalog(sources,candidate.topic);
+      // Save two calls for the source-backed review and Georgian drafting.
+      await store.requireCallCapacity(c.dailyCalls,2);
+      stage='verification';
+      const assessment=await llm(c,store,`Check whether this exact underlying event has already been posted.
+A materially NEW announcement, official action or confirmed development is not a duplicate.
+Use ONLY the retrieved publisher excerpts and their numbered IDs. For one reputable source,
+record supported claims as ATTRIBUTED to its publisher or quoted actor, not as independently
+verified facts. Use at most 4 central claims. Attach each claim to an exact excerpt ID.
+Separate reports from assertions or allegations, never invent quotations, dates or certainty.
+Use known publication.published_at timestamps, not updated or event timestamps.
+Ignore unrelated material and do not demand a second publisher. Reject only genuine
+factual contradictions, unsupported assertions, or repetition without material news value.`,
+        {candidate,history,format,sources:excerpts,now:new Date().toISOString()},verificationSchema);
+      if(assessment.duplicate_event)throw new Halt('Duplicate underlying event');
+      const packet=attributePublisherClaims(normalizePublisherEvidence(resolveEvidence(assessment,excerpts),sources,c));
+      for(const item of packet.sources) {
+        const publication=sources.find(s=>s.id===item.source_id)?.publication;
+        if(publication)item.published_at=publication.published_at;
+      }
+      validatePacket(packet,sources,c);
+      stage='draft';
+      const article=await llm(c,store,`Write a natural, precise Georgian political Telegram post based EXCLUSIVELY on the
+evidence packet. Strong informative headline, direct news lead, 2-3 short coherent paragraphs;
+2-4 useful facts explaining what happened, who is involved and why it matters.
+Keep political claims explicitly attributed to the publisher or official speaker. Treat
+disagreements and allegations neutrally. Do not write opinion or generic predictions.
+Avoid robotic phrasing, repeated background, melodrama, clickbait, concluding questions
+and unnecessary emojis (0-1). Use names, grammar and Georgian orthography carefully.
+Every factual statement must map to claim_ids; include its supporting source_id.
+Never put source URLs or labels in the text: Telegram adds one source-button separately.
+Title + body MUST fit within 950 UTF-16 code units (Telegram photo caption).
+Only use the photo already retrieved from the source; never generate an image.
+Format FLASH is brief, QUICK concise, STANDARD compact with context, DEEP as detailed
+as the photo caption permits. Do not append metadata, pseudo-citations or numbered IDs.`,
+        {verification:packet,format},articleSchema);
+      stage='source-backed-draft';
+      validateArticle(article,packet,sources);
+      if(articleText(article).length>950)throw new Halt('Draft exceeds the photo caption limit');
+      const check={passed:true,unsupported_claims:[],missing_attributions:[],method:'publisher-review-and-local-validation'};
+      const payload={article,verification:packet,sources,selection:candidate,format,
+        fact_check:check,checked_at:new Date().toISOString(),media:primary.image,
+        primary_source_id:0,provider:c.provider,grounding:search.grounding || null};
+      stage='draft-storage';
+      return store.createDraft(candidate,payload,c.ttl);
+    } catch(error) {
+      // Try the next article on editorial evidence failures, not on provider outages,
+      // quota exhaustion or unexpected runtime failures. No unbounded AI retries.
+      const editorial=error instanceof Halt && /^(Duplicate underlying event|Conflicting evidence|Insufficient evidence|Incomplete source assessment|Unknown or stale source publication date|Source publication date conflicts|Source origin mapping conflict|Invalid claim|Evidence quote not in retrieved source|Inconsistent evidence origins|Independent corroboration missing|Attribution missing|Unknown source excerpt ID|Invalid article|Missing evidence source link|Unknown article claim|Unknown article source|Draft exceeds the photo caption limit|Source contains no citable excerpts)/.test(error.message);
+      if(!editorial)throw error;
+      attempt.rejected=error.message;
+      lastEditorialError=error.message;
+      stage='source-fetch';
+    }
   }
   await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('research_source_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-    JSON.stringify({at:now(),selection:selected || null,attempts})).run();
-  if(!selected)throw new Halt('No candidate has two readable fresh publisher-dated sources');
-  const excerpts=excerptCatalog(sources);
-  stage='verification';
-  const assessment=await llm(c,store,`Check the underlying event against history across languages and
-paraphrases. Set duplicate_event=true if it substantially repeats a history event; do not write a draft
-for that event. Assess ALL sources by numeric source_id (the source's id field). Identify publication
-dates from source content; use publication.published_at when publisher metadata supplies it.
-Do not confuse dateModified or the event date with publication time. Do not guess.
-For QUICK use at most 3 central claims; for other formats use at most 6. A single reputable
-publisher article is sufficient when reporting its claims with clear attribution; do not demand independent corroboration. Do not extract unrelated
-details from a long article. For every claim select evidence by source_id and excerpt_id from
-the provided excerpts. Choose passages that directly support the claim and preserve their context.
-Do not write or reconstruct quotations; the program resolves the IDs to the actual source text.
-Identify syndication/shared original announcements. Respect
-operator origin mappings. Use normal newsroom source-based reporting: a credible publisher report
-is sufficient for an ATTRIBUTED claim. Do not demand original field investigations or independent
-proof of each detail. Use verified only when the actual excerpts support two origin groups;
-otherwise use attributed and name the publisher or official speaker. Keep disagreements attributed.
-Return contradictions only for irreconcilable central factual conflicts, not differently attributed statements.`,
-    {candidate:selected,history,format,sources:excerpts,origin_groups:c.origins,now:new Date().toISOString()},verificationSchema);
-  if(assessment.duplicate_event)throw new Halt('Duplicate underlying event');
-  const packet=attributePublisherClaims(resolveEvidence(assessment,excerpts));
-  // Prefer timestamp evidence actually retrieved from the publisher over model date extraction.
-  for(const assessment of packet.sources) {
-    const publication=sources.find(s=>s.id===assessment.source_id)?.publication;
-    if(publication)assessment.published_at=publication.published_at;
-  }
-  validatePacket(packet,sources,c);
-  stage='draft';
-  const primary=sources.find(source=>source.image);
-  if(!primary)throw new Halt('სტატიებს გამოსადეგი ფოტო არ ახლავს; აირჩიე სხვა ამბავი.');
-  const article=await llm(c,store,`Write a neutral Georgian Telegram draft using ONLY the evidence.
-Every assertion must map to claim_ids (zero based). Preserve all attributions and uncertainty.
-Include every supporting source_id. No URLs or HTML in title/body. Title+body <=950 UTF-16 units so the COMPLETE post fits below one photo.
-Match a modern Georgian Telegram newsroom: a clear strong title, a direct opening, 2–3 short
-paragraphs, 2–4 key facts, natural Georgian, at most 1–2 restrained emoji. No clickbait,
-forced conclusion or question. No source labels in the body: a single source button is added.
-Keep all essential attribution even when shortening. This caption limit overrides format length.
-IDs belong ONLY in claim_ids/source_ids metadata. Do not put numeric citation markers such as
-[0, 1], research notes or internal identifiers in the title/body; source buttons are added separately.
-Formats: FLASH very short; QUICK short; STANDARD contextual; DEEP as detailed as the limit permits.`,
-    {verification:packet,format},articleSchema);
-  stage='source-backed-draft';
-  validateArticle(article,packet,sources);
-  if(articleText(article).length>950)throw new Halt('ფოტოს ტექსტი ზედმეტად გრძელია; საჭიროა მოკლე მონახაზი.');
-  // The source was reviewed once above. Do not spend another model request re-checking it.
-  const check={passed:true,unsupported_claims:[],missing_attributions:[],method:'publisher-review-and-local-validation'};
-  const payload={article,verification:packet,sources,selection:selected,format,
-    fact_check:check,checked_at:new Date().toISOString(),media:primary.image,primary_source_id:primary.id,provider:c.provider,
-    grounding:search.grounding || null};
-  stage='draft-storage';
-  return store.createDraft(selected,payload,c.ttl);
+    JSON.stringify({at:now(),selection:null,attempts})).run();
+  throw new Halt('No suitable illustrated political article after trying alternatives: '+lastEditorialError);
   } catch(error) {
     if (error instanceof Halt) throw error;
     // Log only a fixed stage and an error class. Raw upstream messages might
