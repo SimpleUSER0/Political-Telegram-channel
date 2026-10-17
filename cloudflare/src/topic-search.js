@@ -63,7 +63,8 @@ export function rankRequestedArticles(articles,searchTerms,max=3) {
 // 'test' is the publicly documented low-rate demonstration key.
 export async function guardianTopicLookup(c,englishKeywords) {
   const u=new URL('https://content.guardianapis.com/search');
-  u.searchParams.set('api-key','test');
+  if(!c.env.GUARDIAN_API_KEY)return [];
+  u.searchParams.set('api-key',c.env.GUARDIAN_API_KEY);
   u.searchParams.set('q',String(englishKeywords).slice(0,140));
   u.searchParams.set('order-by','newest');
   u.searchParams.set('page-size','35');
@@ -129,27 +130,29 @@ export async function bingTopicLookup(c,englishKeywords) {
   return results;
 }
 export async function lookupRequestedArticles(c,englishKeywords) {
-  const url=topicLookupUrl(englishKeywords);
-  let external=[];
-  try{
-    const response=await fetch(url,{signal:AbortSignal.timeout(10000),
-      headers:{Accept:'application/json'}});
-    if(response.ok){
-      const raw=await readText(response,600000);
-      external=parseTopicIndex(JSON.parse(raw),c.domains);
-    }else await response.body?.cancel();
-  }catch{ /* Public news index is best-effort. RSS remains a fallback. */ }
-  let channel=external.length?'gdelt-public-index':null;
+  // Live production probe: Bing News RSS returns original publisher URLs;
+  // public GDELT frequently times out and Guardian requires a developer API key.
+  // Prefer the tested public provider to avoid 10-20s of failed requests.
+  let external=[],channel=null;
+  try {
+    external=await bingTopicLookup(c,englishKeywords);
+    if(external.length)channel='bing-news-rss';
+  }catch{}
   if(!external.length){
+    try{
+      const response=await fetch(topicLookupUrl(englishKeywords),{
+        signal:AbortSignal.timeout(4500),headers:{Accept:'application/json'}});
+      if(response.ok){
+        external=parseTopicIndex(JSON.parse(await readText(response,600000)),c.domains);
+        if(external.length)channel='gdelt-public-index';
+      }else await response.body?.cancel();
+    }catch{}
+  }
+  // Optional publisher API, only when a valid developer key is configured.
+  if(!external.length && c.env.GUARDIAN_API_KEY){
     try{
       external=await guardianTopicLookup(c,englishKeywords);
       if(external.length)channel='guardian-open-platform';
-    }catch{}
-  }
-  if(!external.length){
-    try{
-      external=await bingTopicLookup(c,englishKeywords);
-      if(external.length)channel='bing-news-rss';
     }catch{}
   }
   // Fallback publisher feeds must STILL be matched to the owner's English
