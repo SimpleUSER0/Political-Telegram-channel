@@ -42,6 +42,14 @@ export async function verifyChannel(c) {
     throw new Halt('A separate political channel is required');
   return chat;
 }
+export async function checkPublishing(c) {
+  const bot=await verifyIdentity(c),channel=await verifyChannel(c);
+  if(!Number.isSafeInteger(bot.id))throw new Halt('Invalid Telegram bot id');
+  const member=await telegram(c,'getChatMember',{chat_id:c.channel,user_id:bot.id});
+  return {available:member?.status==='creator' ||
+    (member?.status==='administrator' && member.can_post_messages===true),
+    bot:bot.username,channel:channel.username || String(channel.id),role:member?.status || 'unknown',at:now()};
+}
 export async function registerWebhook(c) {
   if (missing(c).length) throw new Halt('Incomplete bot configuration');
   const publicUrl=new URL(c.env.PUBLIC_BASE_URL || '');
@@ -191,6 +199,13 @@ export async function drain(c,store,kind,limit=1) {
       else if (kind==='setup') {
         // Only authenticated infrastructure administration can insert this job kind.
         // Public webhook payloads are normalized into control jobs and cannot request setup.
+        if(payload.action==='check_publishing') {
+          const result=await checkPublishing(c);
+          await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('publishing_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            JSON.stringify(result)).run();
+          await store.finish(job);
+          continue;
+        }
         if(payload.action==='check_sources') {
           const result=await checkSources(c);
           await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('source_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
