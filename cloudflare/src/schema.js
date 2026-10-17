@@ -25,13 +25,24 @@ export const schema = [
     searches INTEGER NOT NULL DEFAULT 0)`,
   `CREATE TABLE IF NOT EXISTS cf_media (draft_id TEXT PRIMARY KEY, file_id TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS cf_slots (slot TEXT PRIMARY KEY, created_at INTEGER NOT NULL)`,
-  `INSERT INTO cf_meta(key,value) VALUES ('schema_version','2') ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+  `CREATE TABLE IF NOT EXISTS cf_member_events (
+    update_id INTEGER PRIMARY KEY, action TEXT NOT NULL, method TEXT NOT NULL,
+    day TEXT NOT NULL, at INTEGER NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS cf_members_day ON cf_member_events(day)`,
+  `CREATE TABLE IF NOT EXISTS cf_member_snapshots (
+    day TEXT PRIMARY KEY, member_count INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
+  `INSERT INTO cf_meta(key,value) VALUES ('schema_version','3') ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
 ];
 
 export async function ensureSchema(db) {
   try {
     const row = await db.prepare("SELECT value FROM cf_meta WHERE key='schema_version'").first();
-    if (row?.value === '2') return;
+    if (row?.value === '3') return;
+    if (row?.value === '2') {
+      // Online migration: keep every existing article, job, audit and usage row.
+      await db.batch(schema.slice(-4).map(sql => db.prepare(sql)));
+      return;
+    }
     if (row && row.value!=='1') throw new Error('Unsupported D1 schema version');
   } catch (error) {
     if (!/no such table/i.test(String(error))) throw error;
