@@ -67,9 +67,10 @@ export async function llm(c, store, instruction, data, schema = null, search = f
   const problems = missing(c, true);
   if (problems.length) throw new Halt('Research configuration incomplete');
   const day = await store.reserve('calls', c.dailyCalls);
-  if (c.provider==='gemini') return geminiCall(c,store,day,EDITORIAL+'\n'+instruction,data,schema,search);
-  if (c.provider==='workers-ai')return workersAICall(c,store,day,EDITORIAL+'\n'+instruction,data,schema,search);
-  const body = {model:c.model,store:false,instructions:EDITORIAL+'\n'+instruction,
+  const editorial=c.manualTopic?EDITORIAL+'\nThe owner is requesting a SPECIFIC arbitrary topic, potentially non-political. The requested subject is mandatory. Do not substitute general political news.':EDITORIAL;
+  if (c.provider==='gemini') return geminiCall(c,store,day,editorial+'\n'+instruction,data,schema,search);
+  if (c.provider==='workers-ai')return workersAICall(c,store,day,editorial+'\n'+instruction,data,schema,search);
+  const body = {model:c.model,store:false,instructions:editorial+'\n'+instruction,
     input:JSON.stringify(data),max_output_tokens:c.maxTokens};
   if (schema) body.text = {format:{type:'json_schema',name:'newsroom_result',strict:true,schema}};
   if (search) Object.assign(body, {tools:[{type:'web_search',filters:{allowed_domains:c.domains}}],
