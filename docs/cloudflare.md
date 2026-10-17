@@ -45,8 +45,8 @@ The Worker supports Gemini as well as OpenAI. For a Google AI Studio key use:
 | Text | `AI_PROVIDER` | `gemini` |
 | Text | `GEMINI_MODEL` | `gemini-3.5-flash-lite` |
 | Text | `DISCOVERY_MODE` | `feeds` |
-| Text | `SOURCE_FEEDS` | `bbc-world,guardian-world,civil-ge` |
-| Text | `SOURCE_DOMAINS` | `bbc.co.uk,bbc.com,theguardian.com,civil.ge` |
+| Text | `SOURCE_FEEDS` | `bbc-world,guardian-world,civil-ge,netgazeti` |
+| Text | `SOURCE_DOMAINS` | `bbc.co.uk,bbc.com,theguardian.com,civil.ge,netgazeti.ge` |
 
 Do not put a Google key in `OPENAI_API_KEY`. In Gemini mode neither an OpenAI key nor
 `OPENAI_MODEL` is required. If `AI_PROVIDER` is absent, a `GEMINI_API_KEY` selects Gemini;
@@ -94,7 +94,7 @@ not build variables. `keep_vars: true` preserves dashboard values across future 
 | `AI_PROVIDER` | `gemini` or `openai` |
 | `GEMINI_MODEL` | New free project: `gemini-3.5-flash-lite`; legacy default remains `gemini-2.5-flash` |
 | `DISCOVERY_MODE` | `feeds` for free text models; `web_search` (default) for eligible grounded search |
-| `SOURCE_FEEDS` | Feed mode: at least two of `bbc-world,guardian-world,civil-ge` |
+| `SOURCE_FEEDS` | Feed mode: at least two of `bbc-world,guardian-world,civil-ge,netgazeti` |
 | `OPENAI_API_KEY` | Secret in OpenAI mode only |
 | `EXPECTED_BOT_USERNAME` | New bot username, without `@` |
 | `OWNER_USER_ID` | Your numeric Telegram user ID |
