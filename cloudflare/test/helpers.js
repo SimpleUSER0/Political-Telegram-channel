@@ -54,7 +54,8 @@ export async function draft(store){
 }
 export const mockTelegram = send => async(url,options)=>{
   const method=new URL(url).pathname.split('/').at(-1);
-  if(method==='getMe')return Response.json({ok:true,result:{is_bot:true,username:'political_test_bot'}});
+  if(method==='getMe')return Response.json({ok:true,result:{id:555,is_bot:true,username:'political_test_bot'}});
   if(method==='getChat')return Response.json({ok:true,result:{type:'channel',username:'political_test_channel'}});
+  if(method==='getChatMember')return Response.json({ok:true,result:{status:'administrator',can_post_messages:true}});
   return send(method,JSON.parse(options.body));
 };

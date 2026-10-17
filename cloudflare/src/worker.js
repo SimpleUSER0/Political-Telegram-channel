@@ -2,7 +2,7 @@ import {Halt, articleText, config, equalSecret, id, json, missing, now, readText
   validateArticle, validatePacket} from './core.js';
 import {ensureSchema} from './schema.js';
 import {Store} from './store.js';
-import {editDraft, generate, llm, sourceButtons} from './research.js';
+import {checkSources, editDraft, generate, llm, sourceButtons} from './research.js';
 
 export class TelegramFailure extends Error {
   constructor(message, definitive=false) { super(message); this.definitive=definitive; }
@@ -42,6 +42,15 @@ export async function verifyChannel(c) {
     throw new Halt('A separate political channel is required');
   return chat;
 }
+export async function checkPublishing(c) {
+  const bot=await verifyIdentity(c),channel=await verifyChannel(c);
+  if(!Number.isSafeInteger(bot.id))throw new Halt('Invalid Telegram bot id');
+  const member=await telegram(c,'getChatMember',{chat_id:c.channel,user_id:bot.id});
+  return {available:member?.status==='creator' ||
+    (member?.status==='administrator' && member.can_post_messages===true),
+    bot:bot.username,channel:channel.username || String(channel.id),role:member?.status || 'unknown',
+    can_post_messages:member?.can_post_messages===true,at:now()};
+}
 export async function registerWebhook(c) {
   if (missing(c).length) throw new Halt('Incomplete bot configuration');
   const publicUrl=new URL(c.env.PUBLIC_BASE_URL || '');
@@ -76,9 +85,10 @@ export async function notify(c,draft) {
 export async function publish(c,store,draftId,version) {
   if (!c.publish) throw new Halt('გამოქვეყნება გამორთულია: PUBLISH_ENABLED=false');
   if (missing(c,true).length) throw new Halt('კონფიგურაცია არასრულია');
-  // Identity and channel checks happen BEFORE claiming; they cannot send channel posts.
-  await verifyIdentity(c);
-  await verifyChannel(c);
+  // Permission checks happen BEFORE claiming. The owner can fix Telegram rights
+  // and press Publish again on the same pending draft without losing the version.
+  if(!(await checkPublishing(c)).available)
+    throw new Halt('ბოტს არხში Post Messages უფლება აკლია. ჩართე არხის ადმინისტრატორების პარამეტრებში და კვლავ დააჭირე Publish-ს.');
   const existing=await store.draft(draftId);
   if (!existing) throw new Halt('Draft not found');
   const payload=JSON.parse(existing.payload);
@@ -191,6 +201,20 @@ export async function drain(c,store,kind,limit=1) {
       else if (kind==='setup') {
         // Only authenticated infrastructure administration can insert this job kind.
         // Public webhook payloads are normalized into control jobs and cannot request setup.
+        if(payload.action==='check_publishing') {
+          const result=await checkPublishing(c);
+          await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('publishing_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            JSON.stringify(result)).run();
+          await store.finish(job);
+          continue;
+        }
+        if(payload.action==='check_sources') {
+          const result=await checkSources(c);
+          await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('source_diagnostic',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            JSON.stringify(result)).run();
+          await store.finish(job);
+          continue;
+        }
         if (payload.action==='check_ai') {
           const result=await llm(c,store,'Return available=true to confirm structured API access.',{},
             {type:'object',properties:{available:{type:'boolean'}},required:['available'],additionalProperties:false});

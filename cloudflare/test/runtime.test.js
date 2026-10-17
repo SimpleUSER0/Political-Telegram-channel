@@ -140,8 +140,16 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
         let data;
         if(properties.candidates)data={candidates:[{event_key:'meeting-'+time,topic:'Meeting',event_at:time,
           source_ids:[0,1]}]};
-        else if(properties.publishable)data=variant==='gemini-feeds'
-          ?{...p.verification,sources:p.verification.sources.map(s=>({...s,published_at:null}))}:p.verification;
+        else if(properties.publishable) {
+          const input=JSON.parse(body.input || body.contents[0].parts[0].text);
+          data={...p.verification,
+            sources:p.verification.sources.map(s=>({...s,...(variant==='gemini-feeds'?{published_at:null}:{})})),
+            claims:p.verification.claims.map(claim=>({...claim,evidence:claim.evidence.map(e=>({
+              source_id:e.source_id,excerpt_id:input.sources.find(s=>s.id===e.source_id)
+                .excerpts.find(q=>q.text.includes(e.excerpt)).excerpt_id,
+            }))})),
+          };
+        }
         else if(properties.title)data=p.article;
         else if(properties.passed)data=p.fact_check;
         else throw new Error('Unexpected mock model call');
@@ -163,8 +171,9 @@ test('workerd runs '+variant+' research, real HTMLRewriter extraction, approval 
       '</article></body></html>',{headers:{'Content-Type':'text/html'}});
     if(url.hostname==='api.telegram.org') {
       const method=url.pathname.split('/').at(-1);
-      if(method==='getMe')return Response.json({ok:true,result:{is_bot:true,username:'political_test_bot'}});
+      if(method==='getMe')return Response.json({ok:true,result:{id:555,is_bot:true,username:'political_test_bot'}});
       if(method==='getChat')return Response.json({ok:true,result:{type:'channel',username:'political_test_channel'}});
+      if(method==='getChatMember')return Response.json({ok:true,result:{status:'administrator',can_post_messages:true}});
       if(method==='sendMessage'){sends++;return Response.json({ok:true,result:{message_id:88}});}
     }
     throw new Error('Unexpected outbound request');
