@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {editorialTopic,editorialFeeds,editorialRelevant,editorialCandidates} from '../src/editorial.js';
+import {editorialTopic,editorialFeeds,editorialRelevant,editorialCandidates,polishGeorgianArticle} from '../src/editorial.js';
 import {generate} from '../src/research.js';
 import {config} from '../src/core.js';
 import {env,fixture} from './helpers.js';
@@ -71,4 +71,16 @@ test('an irrelevant China crime request stops BEFORE an AI API call',async()=>{
     const usage=(await store.status()).usage;
     assert.equal(usage.calls,0);
   } finally {globalThis.fetch=original;}
+});
+
+test('common Georgian machine-translation calques are corrected without changing claim metadata',()=>{
+  const original={title:'ბრიტანიის მიერ ჩინული ელექტრომანქანების საკითხი',
+    body:'ეუ-ს სქემას ჩინული საელჩო მოწინააღმდეგობას უწყობს. გეგმა შევიდება განხილვაში.',
+    claim_ids:[0],source_ids:[0]};
+  const changed=polishGeorgianArticle(original);
+  assert.equal(changed.title,'ბრიტანეთის მიერ ჩინული ელექტრომობილების საკითხი');
+  assert.equal(changed.body,'ევროკავშირის სქემას ჩინეთის საელჩო ეწინააღმდეგება. გეგმა შევა განხილვაში.');
+  assert.deepEqual(changed.claim_ids,[0]);
+  assert.deepEqual(changed.source_ids,[0]);
+  assert.equal(original.title,'ბრიტანიის მიერ ჩინული ელექტრომანქანების საკითხი');
 });
