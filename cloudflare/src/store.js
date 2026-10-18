@@ -64,7 +64,7 @@ export class Store {
     ]);
   }
   async history() {
-    return (await this.stmt('SELECT event_key,topic FROM cf_drafts WHERE created_at>? ORDER BY created_at DESC LIMIT 100', now()-7*86400000).all()).results;
+    return (await this.stmt("SELECT event_key,topic,created_at,state,json_extract(payload,'$.sources[0].url') AS url FROM cf_drafts WHERE created_at>? ORDER BY created_at DESC LIMIT 100", now()-7*86400000).all()).results;
   }
   async draft(draftId) { return this.stmt('SELECT * FROM cf_drafts WHERE id=?', draftId).first(); }
   async createDraft(selection, payload, ttl) {
