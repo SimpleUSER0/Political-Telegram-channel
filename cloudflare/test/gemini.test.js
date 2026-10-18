@@ -141,6 +141,20 @@ test('Temporary Gemini 3.8 HTTP 503 triggers one Google Flash-Lite retry, no thi
   }finally{globalThis.fetch=original;}
 });
 
+test('Gemini fallback also obeys the reserved-slot call limit',async()=>{
+  const {store}=await fixture();
+  const c=config({... (await setup()).c.env,AI_PROVIDER:'gemini',
+    GEMINI_MODEL:'gemini-3.8-flash',GEMINI_API_KEY:'offline-only',MAX_DAILY_CALLS:'15'});
+  c.callLimit=1;
+  const original=globalThis.fetch;let requests=0;
+  globalThis.fetch=async()=>{requests++;return Response.json({error:{status:'UNAVAILABLE'}},{status:503});};
+  try {
+    await assert.rejects(llm(c,store,'Check',{},resultSchema),/budget/);
+    assert.equal(requests,1);
+    assert.equal((await store.status()).usage.calls,1);
+  }finally{globalThis.fetch=original;}
+});
+
 test('Free-text science and sport posts use a subject-neutral Gemini editorial policy',async()=>{
   const {store}=await fixture();
   const c=config({... (await setup()).c.env,AI_PROVIDER:'gemini',

@@ -1,5 +1,5 @@
 import {Halt, articleText, missing, normalized, now, outputText, readText, retrievedUrls,
-  sourceUrl, validateArticle, validatePacket, validateJson} from './core.js';
+  sourceUrl, validateArticle, validatePacket, validateJson, nonScheduledCallLimit} from './core.js';
 import {geminiCall} from './gemini.js';
 import {workersAICall} from './workers-ai.js';
 import {discoverFeeds,feedImage,feedPublication} from './feeds.js';
@@ -81,7 +81,8 @@ const checkSchema = object({passed:bool,unsupported_claims:array(s),missing_attr
 export async function llm(c, store, instruction, data, schema = null, search = false) {
   const problems = missing(c, true);
   if (problems.length) throw new Halt('Research configuration incomplete');
-  const day = await store.reserve('calls', c.dailyCalls);
+  const callLimit = Number.isInteger(c.callLimit) ? c.callLimit : nonScheduledCallLimit(c);
+  const day = await store.reserve('calls', callLimit);
   const editorial=c.manualTopic?OWNER_EDITORIAL:EDITORIAL;
   if (c.provider==='gemini') return geminiCall(c,store,day,editorial+'\n'+instruction,data,schema,search);
   if (c.provider==='workers-ai')return workersAICall(c,store,day,editorial+'\n'+instruction,data,schema,search);
@@ -383,11 +384,12 @@ export async function generate(c,store,query,format,edition='night',preferredUrl
     throw new Halt('Daily budget cannot cover a manual request; capacity reserved for scheduled editions');
   await store.requireCallCapacity(scheduled?c.dailyCalls:callCap,requiredCalls);
   await store.reserve('runs',scheduled?c.dailyRuns:runCap);
+  const budgetedModelConfig={...modelConfig,callLimit:scheduled?c.dailyCalls:callCap};
   stage='discovery';
   let searchTerms=null;
   if(directSearch){
     stage='topic-terms';
-    const terms=await llm(modelConfig,store,`Return 2-6 concise ENGLISH keywords for searching
+    const terms=await llm(budgetedModelConfig,store,`Return 2-6 concise ENGLISH keywords for searching
 news publishers for the user's EXACT requested subject. Preserve names and locations;
 do not substitute a broader region or invent an event. Output one JSON string field
 'terms', no unrelated concepts, no instructions and no punctuation operators.`,
@@ -395,7 +397,7 @@ do not substitute a broader region or invent an event. Output one JSON string fi
     searchTerms=terms.terms;
   }
   const search = directSearch?await lookupRequestedArticles(c,searchTerms):
-    usingFeeds?await discoverFeeds(feedConfig,feedQuery):await llm(modelConfig,store,`Find specific
+    usingFeeds?await discoverFeeds(feedConfig,feedQuery):await llm(budgetedModelConfig,store,`Find specific
 publisher articles directly about the requested subject using trustworthy sources.
 Never substitute another subject or invent a source URL.`,
     {now:new Date().toISOString(),query,history},null,true);
@@ -431,7 +433,7 @@ Never substitute another subject or invent a source URL.`,
   if(directSearch && !topicMatches.length)
     throw new Halt('მოთხოვნილ თემაზე შესაბამისი სტატია ვერ მოიძებნა. სხვა თემით არ ჩავანაცვლებ.');
   const discovery = (usingFeeds||directSearch)?{candidates:publisherCandidates(directSearch?topicMatches:editorialCatalog,history,3,edition,scheduled)}:
-    await llm(modelConfig,store,`Select up to THREE credible, dated publisher stories CENTRAL to the owner's EXACT topic. For daily scheduled briefings select important political/geopolitical events.
+    await llm(budgetedModelConfig,store,`Select up to THREE credible, dated publisher stories CENTRAL to the owner's EXACT topic. For daily scheduled briefings select important political/geopolitical events.
 Follow the owner's /news or /post topic strictly when specific; for a broad daily-news query prefer
 elections, legislation, governments, diplomacy, security, wars, sanctions, protests and major
 policy decisions, including Georgian and international developments. Do NOT prioritize celebrity,
@@ -503,7 +505,7 @@ Return [] only if no recent relevant article exists in the catalog.`,
       // An LLM-selected search snippet is not enough: the real fetched publisher
       // article must centrally concern the original user topic.
       stage='topic-relevance';
-      const verdict=await llm(modelConfig,store,`Decide whether this FULL publisher article is
+      const verdict=await llm(budgetedModelConfig,store,`Decide whether this FULL publisher article is
 CENTRALLY about the user's specific request, NOT simply mentioning one keyword in passing.
 Do not approve unrelated news from a different country or subject, even if political.
 If the request is 'Japan' and the article is about US-Russia sanctions, reject.
@@ -522,9 +524,9 @@ Answer based ONLY on the exact retrieved article, its title and excerpt. Be stri
     try {
       const excerpts=excerptCatalog(sources,candidate.topic);
       // Save two calls for the source-backed review and Georgian drafting.
-      await store.requireCallCapacity(c.dailyCalls,2);
+      await store.requireCallCapacity(budgetedModelConfig.callLimit,2);
       stage='verification';
-      const assessment=await llm(modelConfig,store,`Check whether this exact underlying event has already been posted.
+      const assessment=await llm(budgetedModelConfig,store,`Check whether this exact underlying event has already been posted.
 A materially NEW announcement, official action or confirmed development is not a duplicate.
 Use ONLY the retrieved publisher excerpts and their numbered IDs. For one reputable source,
 record supported claims as ATTRIBUTED to its publisher or quoted actor, not as independently
@@ -546,7 +548,7 @@ factual contradictions, unsupported assertions, or repetition without material n
       }
       validatePacket(packet,sources,c);
       stage='draft';
-      const generatedArticle=await llm(modelConfig,store,`${GEORGIAN_STYLE_EXAMPLES}\n\nWrite a natural, precise Georgian Telegram post on the REQUESTED SUBJECT based EXCLUSIVELY on the
+      const generatedArticle=await llm(budgetedModelConfig,store,`${GEORGIAN_STYLE_EXAMPLES}\n\nWrite a natural, precise Georgian Telegram post on the REQUESTED SUBJECT based EXCLUSIVELY on the
 evidence packet. Strong informative headline, direct news lead, 2-3 short coherent paragraphs;
 2-4 useful facts explaining what happened, who is involved and why it matters.
 Prefer 1-3 very short clear Georgian sentences over 3 paragraphs of filler.
@@ -580,9 +582,9 @@ Do not append metadata, pseudo-citations or numbered IDs.`,
       if(grammarIssues.length){
         // Additional editor pass only if clearly broken Georgian was detected.
         // Keep the verified evidence packet as the ground truth, not the bad wording.
-        await store.requireCallCapacity(c.dailyCalls,1);
+        await store.requireCallCapacity(budgetedModelConfig.callLimit,1);
         stage='georgian-revision';
-        const revised=await llm(modelConfig,store,`${GEORGIAN_STYLE_EXAMPLES}
+        const revised=await llm(budgetedModelConfig,store,`${GEORGIAN_STYLE_EXAMPLES}
 
 You are the final Georgian copy editor. The first draft FAILED due to malformed
 Georgian or repeated phrases. Do NOT copy its broken grammar, and never copy

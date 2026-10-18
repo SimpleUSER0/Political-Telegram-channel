@@ -78,7 +78,7 @@ export async function geminiCall(c,store,day,instruction,data,schema,search) {
   // external providers, recursive retries or an unbounded fallback chain.
   if([429,503].includes(response.status) && c.model==='gemini-3.8-flash' && !search) {
     await response.body?.cancel();
-    await store.reserve('calls',c.dailyCalls);
+    await store.reserve('calls',Number.isInteger(c.callLimit)?c.callLimit:c.dailyCalls);
     response=await send('gemini-3.5-flash-lite');
   }
   const raw=await readText(response,1000000);

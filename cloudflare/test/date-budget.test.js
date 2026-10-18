@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {requireDatedSources,generate} from '../src/research.js';
+import {config,nonScheduledCallLimit} from '../src/core.js';
 import {fixture} from './helpers.js';
 
 const instant=Date.parse('2026-10-16T18:00:00Z');
@@ -8,6 +9,21 @@ const recent='2026-10-16T17:30:00Z';
 const settings={age:48*3600000};
 const story=(host,date,id)=>({id,url:'https://'+host+'/world/story',text:'Publisher article text',
   ...(date?{publication:{published_at:date,via:'publisher-rss'}}:{})});
+
+test('ad-hoc API calls preserve four calls for each not-yet-passed Tbilisi edition',()=>{
+  const c=config({MAX_DAILY_CALLS:'120',SCHEDULE_ENABLED:'true',SCHEDULE_HOURS:'[9,13,18,21]'});
+  assert.equal(nonScheduledCallLimit(c,Date.parse('2026-10-18T08:30:00Z')),108); // 12:30 Tbilisi
+  assert.equal(nonScheduledCallLimit(c,Date.parse('2026-10-18T13:30:00Z')),112); // 17:30 Tbilisi
+  assert.equal(nonScheduledCallLimit(c,Date.parse('2026-10-18T18:30:00Z')),120); // 22:30 Tbilisi
+});
+
+test('daily call cap remains hard when a conversation is given a reserved-slot budget',async()=>{
+  const {c,store}=await fixture();
+  await store.reserve('calls',1);
+  const {llm}=await import('../src/research.js');
+  await assert.rejects(llm({...c,dailyCalls:10,callLimit:1},store,'No API request should run',{}),/budget/);
+  assert.equal((await store.status()).usage.calls,1);
+});
 
 test('only publisher-dated fresh articles reach paid verification; source IDs are compacted',()=>{
   const sources=[story('bbc.com',recent,10),story('theguardian.com',null,11),

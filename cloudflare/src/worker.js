@@ -1,4 +1,4 @@
-import {Halt, articleText, config, equalSecret, id, json, missing, now, readText,
+import {Halt, articleText, config, equalSecret, id, json, missing, now, readText, nonScheduledCallLimit,
   validateArticle, validatePacket,outputText,retrievedUrls} from './core.js';
 import {ensureSchema} from './schema.js';
 import {Store} from './store.js';
@@ -209,7 +209,7 @@ async function conversation(c,store,question) {
     if(Array.isArray(parsed))history=parsed.filter(x=>['user','assistant'].includes(x.role)&&
       typeof x.content==='string').slice(-6);
   }catch{}
-  const answer=await llm({...c,manualTopic:true},store,
+  const answer=await llm({...c,manualTopic:true,callLimit:nonScheduledCallLimit(c)},store,
     'You are a helpful conversational assistant speaking natural Georgian. Reply to the owner\'s actual question, on ANY lawful subject. Do NOT compose or publish a Telegram news post. Use conversational Georgian and acknowledge uncertainty about current facts; never invent sources or breaking news. Be concise.',
     {history,question,now:new Date().toISOString()});
   const reply=outputText(answer).trim();

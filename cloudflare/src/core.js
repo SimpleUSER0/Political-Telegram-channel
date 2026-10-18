@@ -12,6 +12,14 @@ export function number(value, fallback, min, max) {
   if (!Number.isInteger(n) || n < min || n > max) throw new Halt('Invalid numeric configuration');
   return n;
 }
+// Ad-hoc work must leave four calls for every Tbilisi slot that has not
+// passed. Scheduled jobs explicitly receive the full cap.
+export function nonScheduledCallLimit(c, time = now()) {
+  if (!c.schedule || !c.hours?.length) return c.dailyCalls;
+  const hour = new Date(time + 4 * 3600000).getUTCHours();
+  const upcoming = new Set(c.hours.filter(value => value >= hour)).size;
+  return Math.max(0, c.dailyCalls - 4 * upcoming);
+}
 export function config(env) {
   const provider=String(env.AI_PROVIDER || (env.GEMINI_API_KEY?'gemini':'openai')).toLowerCase();
   if (!['gemini','openai','workers-ai'].includes(provider)) throw new Halt('AI_PROVIDER must be gemini, openai or workers-ai');
