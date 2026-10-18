@@ -5,7 +5,7 @@ import {workersAICall} from './workers-ai.js';
 import {discoverFeeds,feedImage,feedPublication} from './feeds.js';
 import {editorialCandidates,polishGeorgianArticle} from './editorial.js';
 import {GEORGIAN_STYLE_EXAMPLES,georgianQualityIssues,requireGeorgianQuality} from './georgian-quality.js';
-import {editionDetails,rankEditorialEntries,localClock,newsroomBeat} from './news-plan.js';
+import {editionDetails,editionWordCount,meetsEditionWordTarget,rankEditorialEntries,localClock,newsroomBeat} from './news-plan.js';
 import {lookupRequestedArticles,rankRequestedArticles,MANUAL_PUBLISHER_DOMAINS} from './topic-search.js';
 
 const OWNER_EDITORIAL = `You are the owner's trusted Georgian-language Telegram draft editor.
@@ -252,20 +252,23 @@ export function rankedCandidates(candidates,catalog,c,history,time=now()) {
 
 // RSS publishers supply actual titles, URLs and dates: never ask an LLM to invent
 // the event metadata or pair a real source ID with an unrelated event.
-export function publisherCandidates(entries,history=[],max=3,edition='night',scheduled=false) {
+export function publisherCandidates(entries,history=[],max=3,edition='night',scheduled=false,time=Date.now()) {
   const hash=value=>{
     let h=2166136261;
     for(let i=0;i<value.length;i++)h=Math.imul(h^value.charCodeAt(i),16777619);
     return (h>>>0).toString(16);
   };
-  // Worldwide news comes first. A scheduled edition may use at most one
-  // Georgia-based story in a rolling eight real (not cancelled) drafts.
-  // Manual owner requests remain unrestricted by this editorial proportion.
-  const recent=history.filter(h=>h.state!=='cancelled').slice(0,8);
-  const georgiaAlreadyCovered=scheduled && recent.some(h=>
-    newsroomBeat({title:h.topic,url:h.url})==='georgia');
+  // Keep scheduled coverage humanly balanced: no more than one Georgia story
+  // in a Tbilisi day and no more than two in the latest eight scheduled drafts.
+  // Manual owner requests do not consume the scheduled editorial quota.
+  const recent=history.filter(h=>h.state!=='cancelled' && h.scheduled!==false && h.scheduled!==0).slice(0,8);
+  const today=localClock(time).day;
+  const georgiaToday=recent.some(h=>Number.isFinite(Number(h.created_at)) &&
+    localClock(Number(h.created_at)).day===today && newsroomBeat({title:h.topic,url:h.url})==='georgia');
+  const georgiaInWindow=recent.filter(h=>newsroomBeat({title:h.topic,url:h.url})==='georgia').length;
+  const allowGeorgia=!scheduled || (!georgiaToday && georgiaInWindow<2);
   const eligible=entries.filter(e=>e.url && e.title && Number.isFinite(Date.parse(e.published_at)) &&
-    (!georgiaAlreadyCovered || newsroomBeat(e)!=='georgia'));
+    (allowGeorgia || newsroomBeat(e)!=='georgia'));
   return rankEditorialEntries(eligible,edition,history)
     .map(e=>({event_key:'rss_'+hash(e.url)+'_'+new Date(e.published_at).toISOString().slice(0,10),
       topic:e.title,event_at:e.published_at,source_ids:[e.source_id]}))
@@ -569,8 +572,9 @@ Never put source URLs or labels in the text: Telegram adds one source-button sep
 Title + body MUST fit within 950 UTF-16 code units (Telegram photo caption).
 Only use the photo already retrieved from the source; never generate an image.
 Format FLASH is brief, QUICK concise, STANDARD compact with context, DEEP as detailed
-as the photo caption permits. Follow edition_targets for the Georgian word-count GOAL,
-not a mandatory minimum. Avoid filler or repetition if fewer supported details are available.
+as the photo caption permits. For scheduled posts, target the edition_targets word range
+counting title and body together. Use the midpoint when evidence supports it; never add
+unsupported details or filler just to reach the range.
 Aim for 600-900 UTF-16 units in STANDARD when evidence permits, never exceeding 950.
 For evening, add helpful direct context; for breaking, state only confirmed new facts.
 Do not append metadata, pseudo-citations or numbered IDs.`,
@@ -604,9 +608,32 @@ Do not pad word counts. Output ONLY the required JSON object.`,
         grammarIssues=georgianQualityIssues(article);
       }
       requireGeorgianQuality(article);
+      if(scheduled && !meetsEditionWordTarget(article,edition)){
+        const target=editionDetails(edition),initialCount=editionWordCount(article);
+        await store.requireCallCapacity(budgetedModelConfig.callLimit,1);
+        stage='edition-length-revision';
+        const revised=await llm(budgetedModelConfig,store,`${GEORGIAN_STYLE_EXAMPLES}
+
+You are resizing a scheduled Georgian news draft to its agreed edition length.
+Rewrite the draft using ONLY the supplied verified evidence packet and the existing
+article. Count the title and body together. The exact target is ${target.minWords}-${target.maxWords}
+Georgian words; aim for the midpoint. Add only useful context directly supported by the
+evidence, remove repetition and never invent or infer facts. Keep the title informative,
+the Georgian natural, the post concise, and the complete title plus body under 950 UTF-16
+units. Preserve every existing claim_id and source_id exactly. Output only the JSON object.`,
+          {evidence:packet,article,word_count:initialCount,edition_targets:target},articleSchema);
+        if(JSON.stringify(revised.claim_ids)!==JSON.stringify(article.claim_ids) ||
+           JSON.stringify(revised.source_ids)!==JSON.stringify(article.source_ids))
+          throw new Halt('Scheduled length revision changed verified source or claim IDs');
+        article=polishGeorgianArticle(revised);
+        validateArticle(article,packet,sources);
+        requireGeorgianQuality(article);
+        if(!meetsEditionWordTarget(article,edition))
+          throw new Halt(`Scheduled draft length outside ${target.minWords}-${target.maxWords} words`);
+      }
       if(articleText(article).length>950)throw new Halt('Draft exceeds the photo caption limit');
       const check={passed:true,unsupported_claims:[],missing_attributions:[],method:'publisher-review-and-local-validation'};
-      const payload={article,verification:packet,sources,selection:candidate,format,edition,
+      const payload={article,verification:packet,sources,selection:candidate,format,edition,scheduled,
         fact_check:check,checked_at:new Date().toISOString(),media:primary.image,
         primary_source_id:0,provider:c.provider,grounding:search.grounding || null};
       stage='draft-storage';

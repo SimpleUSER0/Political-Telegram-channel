@@ -18,6 +18,14 @@ export function editionAtHour(hour) {
 export function editionDetails(name='night') {
   return EDITIONS[name] || EDITIONS.night;
 }
+export function editionWordCount(article) {
+  const text=[article?.title,article?.body].filter(Boolean).join(' ').trim();
+  return text ? text.split(/\s+/u).length : 0;
+}
+export function meetsEditionWordTarget(article,edition) {
+  const {minWords,maxWords}=editionDetails(edition),count=editionWordCount(article);
+  return count>=minWords && count<=maxWords;
+}
 export function localClock(utcMs) {
   const local=new Date(utcMs+4*3600000);
   return {day:local.toISOString().slice(0,10),hour:local.getUTCHours(),

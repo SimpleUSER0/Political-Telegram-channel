@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {config} from '../src/core.js';
 import {env,fixture} from './helpers.js';
 import {schedule,scheduleBreaking,retryScheduledFailures,retryFailedDeliveries,recoverUndeliveredDrafts,drain} from '../src/worker.js';
-import {breakingCandidates,breakingEligible,editionAtHour,editionDetails,localClock,
+import {breakingCandidates,breakingEligible,editionAtHour,editionDetails,editionWordCount,meetsEditionWordTarget,localClock,
   newsroomBeat,rankEditorialEntries,REGULAR_HOURS} from '../src/news-plan.js';
 
 test('Four Tbilisi editions are exactly 09, 13, 18 and 21; optional breaking differs',()=>{
@@ -16,6 +16,18 @@ test('Four Tbilisi editions are exactly 09, 13, 18 and 21; optional breaking dif
   assert.equal(editionDetails('breaking').hour,null);
   assert.deepEqual(localClock(Date.UTC(2026,9,17,5,0)),{
     day:'2026-10-17',hour:9,minute:0,slot:'2026-10-17T09'});
+});
+test('scheduled post word targets match each agreed edition and count title plus body',()=>{
+  const specs=[['morning',70,90],['midday',80,100],['evening',90,115],['night',75,100]];
+  for(const [edition,min,max] of specs){
+    const article={title:Array(min?1:0).fill('სათაური').join(' '),body:Array(min-1).fill('ამბავი').join(' ')};
+    assert.equal(editionWordCount(article),min);
+    assert.equal(meetsEditionWordTarget(article,edition),true);
+    const short={...article,body:Array(min-2).fill('ამბავი').join(' ')};
+    const long={...article,body:Array(max).fill('ამბავი').join(' ')};
+    assert.equal(meetsEditionWordTarget(short,edition),false);
+    assert.equal(meetsEditionWordTarget(long,edition),false);
+  }
 });
 test('One deterministic regular research job per slot with correct editorial edition',async()=>{
   const {c,store}=await fixture();
