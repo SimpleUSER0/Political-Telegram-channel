@@ -227,8 +227,8 @@ export function manualPostRequest(text) {
     [first.trim().slice(firstToken.length).trim(),...remaining].join('\n').trim():
     raw;
   if(explicit && !query)query=REGULAR_QUERY;
-  if(query.length<3 || query.length>1000)
-    return {error:'პოსტის თემა უნდა იყოს 3–1000 სიმბოლო.'};
+  if(query.length<2 || query.length>1000)
+    return {error:'პოსტის თემა უნდა იყოს 2–1000 სიმბოლო.'};
   const format=/(?:მოკლე|მოკლედ|კონსპექტურად|brief|short)/iu.test(query)?'QUICK':
     /(?:ვრცლად|დეტალურად|დეტალური|ღრმად|in.depth|detailed)/iu.test(query)?'DEEP':
     /(?:სასწრაფო|მყისიერი|breaking|flash)/iu.test(query)?'FLASH':'STANDARD';
