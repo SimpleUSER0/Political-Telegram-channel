@@ -10,7 +10,7 @@ export const EDITIONS=Object.freeze({
   breaking:{hour:null,name:'განსაკუთრებული მნიშვნელოვანი მოვლენა',beat:null,minWords:45,maxWords:75},
 });
 export const REGULAR_HOURS=[9,13,18,21];
-export const REGULAR_QUERY='მსოფლიო პოლიტიკის, საერთაშორისო დიპლომატიის, უსაფრთხოებისა და გეოპოლიტიკის მნიშვნელოვანი ახალი მოვლენები';
+export const REGULAR_QUERY='მსოფლიო პოლიტიკური მოვლენები, საერთაშორისო დიპლომატია, უსაფრთხოება და გეოპოლიტიკა';
 
 export function editionAtHour(hour) {
   return Object.keys(EDITIONS).find(key=>EDITIONS[key].hour===hour) || null;
