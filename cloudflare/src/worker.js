@@ -484,6 +484,33 @@ export async function schedule(c,store,time) {
 }
 
 
+
+/**
+ * Restore an unattended edition after temporary Gemini 503/502/504 failures.
+ * Up to two unique follow-up attempts; do not replay completed, malformed,
+ * duplicate or quota-denied jobs. Never republish without owner approval.
+ * Stable IDs make 1-minute overlapping Cloudflare cron executions harmless.
+ */
+export async function retryScheduledFailures(c,store,time) {
+  if (!c.research || !c.schedule || missing(c,true).length) return;
+  const clock=localClock(time);
+  const prefix='schedule-'+clock.day+'T';
+  const failures=(await store.stmt(
+    "SELECT id,payload,error,finished_at FROM cf_jobs WHERE kind='research' AND status='failed' AND id LIKE ? ORDER BY finished_at LIMIT 12",
+    prefix+'%').all()).results||[];
+  for(const job of failures) {
+    const match=/^schedule-(\\d{4}-\\d{2}-\\d{2}T\\d{2})(?:-retry-(\\d))?$/.exec(job.id);
+    if(!match)continue;
+    const previous=Number(match[2]||0);
+    if(previous>=2 || !/Gemini request failed \\(HTTP (?:502|503|504)\\)/.test(job.error||''))continue;
+    const original=new Date(match[1]+':00:00+04:00').getTime();
+    if(!Number.isFinite(original)||time-original>8*3600000 || time-original<10*60000 ||
+       time-Number(job.finished_at)<10*60000)continue;
+    const retryId='schedule-'+match[1]+'-retry-'+(previous+1);
+    await store.enqueue('research',JSON.parse(job.payload),retryId);
+  }
+}
+
 /**
  * At most one exceptional fifth draft per Tbilisi day.
  * Check at hh:30 only; never spend AI calls during headline screening.
@@ -625,6 +652,7 @@ export default {
       await drain(c,store,'setup',1);
       await drain(c,store,'control',3);
       await schedule(c,store,event.scheduledTime);
+      await retryScheduledFailures(c,store,event.scheduledTime);
       await scheduleBreaking(c,store,event.scheduledTime);
       await drain(c,store,'edit',1);
       await drain(c,store,'research',1);
