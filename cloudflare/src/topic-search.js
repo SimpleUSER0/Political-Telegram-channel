@@ -158,7 +158,7 @@ export async function lookupRequestedArticles(c,englishKeywords) {
     external=await bingTopicLookup(c,englishKeywords);
     if(external.length)channel='bing-news-rss';
   }catch{}
-  if(!external.length){
+  if(!rankRequestedArticles(external,englishKeywords,1).length){
     try{
       const response=await fetch(topicLookupUrl(englishKeywords),{
         signal:AbortSignal.timeout(4500),headers:{Accept:'application/json'}});
@@ -169,7 +169,7 @@ export async function lookupRequestedArticles(c,englishKeywords) {
     }catch{}
   }
   // Optional publisher API, only when a valid developer key is configured.
-  if(!external.length && c.env.GUARDIAN_API_KEY){
+  if(!rankRequestedArticles(external,englishKeywords,1).length && c.env.GUARDIAN_API_KEY){
     try{
       external=await guardianTopicLookup(c,englishKeywords);
       if(external.length)channel='guardian-open-platform';
@@ -177,15 +177,16 @@ export async function lookupRequestedArticles(c,englishKeywords) {
   }
   // Fallback publisher feeds must STILL be matched to the owner's English
   // subject. A generic world-politics headline is never a valid substitute.
-  if(!external.length){
+  if(!rankRequestedArticles(external,englishKeywords,1).length){
     try{
-      const rss=await discoverFeeds(c,'');
+      const rss=await discoverFeeds(c,englishKeywords);
       external=rss.articles.map(({url,title,summary,published_at,image,feed})=>
         ({url,title,summary,published_at,image,feed}));
       if(external.length)channel='publisher-rss-fallback';
     }catch{}
   }
-  if(!external.length)throw new Halt('No accessible articles for requested topic');
+  if(!external.length || !rankRequestedArticles(external,englishKeywords,1).length)
+    throw new Halt('No indexed publisher article actually matches the requested topic');
   const articles=[...new Map(external.map(a=>[a.url,a])).values()];
   return {articles,provider:channel,
     grounding:{kind:'independent-news-index',index:channel},
