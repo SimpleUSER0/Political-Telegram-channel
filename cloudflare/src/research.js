@@ -261,7 +261,8 @@ export function publisherCandidates(entries,history=[],max=3,edition='night',sch
   // Keep scheduled coverage humanly balanced: no more than one Georgia story
   // in a Tbilisi day and no more than two in the latest eight scheduled drafts.
   // Manual owner requests do not consume the scheduled editorial quota.
-  const recent=history.filter(h=>h.state!=='cancelled' && h.scheduled!==false && h.scheduled!==0).slice(0,8);
+  const scheduledHistory=history.filter(h=>h.state!=='cancelled' && h.scheduled!==false && h.scheduled!==0);
+  const recent=scheduledHistory.slice(0,8);
   const today=localClock(time).day;
   const georgiaToday=recent.some(h=>Number.isFinite(Number(h.created_at)) &&
     localClock(Number(h.created_at)).day===today && newsroomBeat({title:h.topic,url:h.url})==='georgia');
@@ -269,7 +270,7 @@ export function publisherCandidates(entries,history=[],max=3,edition='night',sch
   const allowGeorgia=!scheduled || (!georgiaToday && georgiaInWindow<2);
   const eligible=entries.filter(e=>e.url && e.title && Number.isFinite(Date.parse(e.published_at)) &&
     (allowGeorgia || newsroomBeat(e)!=='georgia'));
-  return rankEditorialEntries(eligible,edition,history)
+  return rankEditorialEntries(eligible,edition,scheduled?scheduledHistory:history)
     .map(e=>({event_key:'rss_'+hash(e.url)+'_'+new Date(e.published_at).toISOString().slice(0,10),
       topic:e.title,event_at:e.published_at,source_ids:[e.source_id]}))
     .filter(e=>!history.some(h=>normalized(h.event_key)===normalized(e.event_key)))
