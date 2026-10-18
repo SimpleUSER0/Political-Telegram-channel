@@ -2,6 +2,12 @@
 // This is a conservative metadata prefilter, not a factuality verdict.
 const POLITICS = /\b(?:president|prime minister|government|minister|parliament|congress|senate|elections?|electoral|vote|voting|ballot|politic(?:s|al)?|diplomat(?:ic|s)?|diplomacy|summit|summits|sanctions?|tariffs?|trade war|foreign polic(?:y|ies)|security council|nato|eu leaders|european union|ceasefire|peace talks|treaty|border dispute|military|troops|warfare|war|invasion|protests?|legislation|white house|kremlin|cabinet|regime|referendum|party leader|defence|defense|foreign minister|state visit|ambassador|policy change|political prisoners|geopolitic(?:s|al)?|bilateral|delegation|negotiation|peace deal|resignation|opposition|navy|naval|warship|missiles?|nuclear|airstrike|territorial waters|territorial dispute|border tensions|cross-strait|defence spending|arms sale|Xi Jinping)\b|არჩევნ|პოლიტიკ|მთავრობ|პრეზიდენტ|პრემი[ეე]რ|პარლამენტ|დეპუტატ|მინისტრ|დიპლომატ|სამიტ|სანქცი|ტარიფ|სავაჭრო ომ|უსაფრთხოებ|სამხედრო|ომი|ომის |საომარ|შეტაკებ|კონფლიქტ|მოლაპარაკ|შეთანხმებ|პროტესტ|აქციაზე|კანონ|რეფერენდუმ|ოპოზიცი|პარტი|საგარეო|საკანონმდებლო|ევროკავშირ|ნატო|ელჩ|სხდომ|თავდაცვ|თავდასხმ|ოკუპაცი/iu;
 const ROUTINE = /\b(?:nursery|poison(?:ed|ing)?|celebrity|actor|actress|football|soccer|basketball|film|movie|music|album|fashion|restaurant|recipe|lottery|horoscope|wedding|divorce|influencer|arrested for theft|murder trial|stabbing|school exam|sports star|medical treatment|hospital discharge)\b|საბავშვო ბაღ|მოწამლ|მკვლელობ|ქურდობ|ავარი|კრიმინალ|მსახიობ|მომღერალ|ფეხბურთ|კალათბურთ|კინოფილმ|ქორწილ|ჯანმრთელობ|საავადმყოფო|კულინარი/iu;
+// An accident or emergency at a military location is not automatically
+// political news. A politician mentioning it in the summary does not change
+// the subject of the story; require clear policy, conflict or diplomacy in
+// the article's own headline before admitting these routine incidents.
+const INCIDENTAL_DISASTER = /\b(?:blaze|wildfire|firefighters?|building fire|base fire|forest fire|factory fire|industrial accident|traffic accident|road crash|fatal accident|accidental explosion|serious incident|building collapse)\b|ხანძარ|უბედური შემთხვევა|ავტოსაგზაო შემთხვევა/iu;
+const SUBSTANTIVE_POLITICS_IN_HEADLINE = /\b(?:war|invasion|military strike|airstrike|missile attack|armed attack|militant attack|terrorist attack|sanctions?|ceasefire|peace talks|treaty|parliament|elections?|legislation|lawmakers?|government (?:orders|declares|approves|signs)|state of emergency|diplomac(?:y|y)|foreign policy|nato|troops (?:invade|withdraw|deploy)|protest|security council)\b|ომი|ომის |თავდასხმ|სარაკეტო|სანქცი|ცეცხლის შეწყვეტ|მოლაპარაკ|არჩევნ|პარლამენტ|მთავრობამ|საგანგებო მდგომარეობ|დიპლომატ|პროტესტ/iu;
 const TOPICS = [
   {id:'japan',question:/იაპონ|ტოკიო|japan|japanese|tokyo|kishida|ishiba|takaichi/i,
     article:/\b(?:japan|japanese|tokyo|japan's|japan–|ishiba|takaichi|kishida)\b|იაპონ|ტოკიო|ტაკაიჩ|იშიბ|კიშიდ/iu,
@@ -39,8 +45,10 @@ export function editorialFeeds(query,configured) {
   return [...new Set([...(configured||[]),...(topic?.feeds||[])])];
 }
 export function editorialRelevant(article,query='') {
-  const text=[article?.title||'',article?.summary||''].join(' ').trim();
+  const title=String(article?.title||'');
+  const text=[title,article?.summary||''].join(' ').trim();
   if(!text)return false;
+  if(INCIDENTAL_DISASTER.test(title) && !SUBSTANTIVE_POLITICS_IN_HEADLINE.test(title))return false;
   const topic=editorialTopic(query);
   if(topic && !topic.article.test(topic.headlineRequired?String(article?.title||''):text))return false;
   if(topic?.id==='japan' && /\b(?:mentions?|mentioned|briefly referenced|a passing reference to|cites? japan in passing)\b|მხოლოდ მოიხსენია|მხოლოდ ახსენა/iu.test(String(article?.title||'')))return false;
