@@ -10,7 +10,7 @@ export const EDITIONS=Object.freeze({
   breaking:{hour:null,name:'განსაკუთრებული მნიშვნელოვანი მოვლენა',beat:null,minWords:45,maxWords:75},
 });
 export const REGULAR_HOURS=[9,13,18,21];
-export const REGULAR_QUERY='მნიშვნელოვანი ახალი პოლიტიკური და გეოპოლიტიკური ამბავი მსოფლიოში და საქართველოში';
+export const REGULAR_QUERY='მსოფლიო პოლიტიკის, საერთაშორისო დიპლომატიის, უსაფრთხოებისა და გეოპოლიტიკის მნიშვნელოვანი ახალი მოვლენები';
 
 export function editionAtHour(hour) {
   return Object.keys(EDITIONS).find(key=>EDITIONS[key].hour===hour) || null;
@@ -40,8 +40,9 @@ export function newsroomBeat(entry) {
 const TARGETS={'world-politics':0.4,geopolitics:0.3,'diplomacy-economy':0.2,georgia:0.1};
 export function rankEditorialEntries(entries,edition='night',history=[],time=Date.now()) {
   const plan=editionDetails(edition);
-  const recent=history.slice(0,20),counts=Object.fromEntries(Object.keys(TARGETS).map(k=>[k,0]));
-  for(const item of recent)counts[newsroomBeat({title:item.topic})]++;
+  const recent=history.filter(h=>h.state!=='cancelled').slice(0,20);
+  const counts=Object.fromEntries(Object.keys(TARGETS).map(k=>[k,0]));
+  for(const item of recent)counts[newsroomBeat({title:item.topic,url:item.url})]++;
   return [...entries].sort((a,b)=>score(b)-score(a)||Date.parse(b.published_at)-Date.parse(a.published_at));
   function score(entry) {
     const beat=newsroomBeat(entry),published=Date.parse(entry.published_at);
@@ -49,7 +50,7 @@ export function rankEditorialEntries(entries,edition='night',history=[],time=Dat
     const recency=Math.max(0,8-hours/4);
     const value=HIGH_VALUE.test((entry.title||'')+' '+(entry.summary||''))?2:0;
     const slot=plan.beat===beat?2.2:0;
-    const underserved=Math.max(0,(TARGETS[beat]-(counts[beat]/Math.max(1,recent.length))))*4;
+    const underserved=Math.max(0,(TARGETS[beat]-(counts[beat]/Math.max(1,recent.length))))*6;
     return recency+value+slot+underserved+(entry.has_publisher_image?0.2:0);
   }
 }
