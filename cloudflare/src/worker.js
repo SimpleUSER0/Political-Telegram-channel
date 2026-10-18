@@ -449,12 +449,32 @@ export async function drain(c,store,kind,limit=1) {
       else if (kind==='research') {
         const created=await generate(c,store,payload.query,payload.format,payload.edition||'night',payload.preferredUrl||null,Boolean(payload.manual));
         // A notification error must not delete a completed draft or repeat paid research.
-        try { await notify(c,created,store); } catch { console.warn('Draft created; owner notification unavailable'); }
+        try { await notify(c,created,store); }
+        catch {
+          // A generated draft is never lost just because Telegram temporarily
+          // rejects a photo/file: retry OWNER PREVIEW ONLY, never publication.
+          await store.enqueue('delivery',{draftId:created.id,version:created.version},
+            'delivery-'+created.id+'-'+created.version);
+          try {await tell(c,'⚠️ მონახაზი მომზადდა, მაგრამ ფოტოს/შეტყობინების გაგზავნა შეფერხდა. სისტემა ავტომატურად გაიმეორებს მცდელობას. ID: '+created.id+' — /show '+created.id);}
+          catch {}
+          console.warn('Draft delivery pending retry');
+        }
+      } else if (kind==='delivery') {
+        const saved=await store.draft(payload.draftId);
+        if(!saved || saved.version!==payload.version || saved.state!=='pending' || saved.expires_at<=now()) {
+          await store.finish(job);continue;
+        }
+        await notify(c,saved,store);
       } else if (kind==='edit') {
         draft=await store.claimDraft(payload.draftId,payload.version,'editing',c.owner);
         if (!draft) throw new Halt('მონახაზის ვერსია შეიცვალა ან ვადაგასულია');
         const edited=await editDraft(c,store,draft,payload.title,payload.body);
-        try { await notify(c,edited,store); } catch { console.warn('Draft edited; owner notification unavailable'); }
+        try { await notify(c,edited,store); }
+        catch {
+          await store.enqueue('delivery',{draftId:edited.id,version:edited.version},
+            'delivery-'+edited.id+'-'+edited.version);
+          console.warn('Edited draft delivery pending retry');
+        }
       }
       await store.finish(job);
     } catch (error) {
@@ -504,10 +524,29 @@ export async function retryScheduledFailures(c,store,time) {
     const previous=Number(match[2]||0);
     if(previous>=2 || !/Gemini request failed \(HTTP (?:502|503|504)\)/.test(job.error||''))continue;
     const original=new Date(match[1]+':00:00+04:00').getTime();
-    if(!Number.isFinite(original)||time-original>12*3600000 || time-original<10*60000 ||
-       time-Number(job.finished_at)<10*60000)continue;
+    if(!Number.isFinite(original)||time-original>12*3600000 || time-original<3*60000 ||
+       time-Number(job.finished_at)<3*60000)continue;
     const retryId='schedule-'+match[1]+'-retry-'+(previous+1);
     await store.enqueue('research',JSON.parse(job.payload),retryId);
+  }
+}
+
+/**
+ * Photo previews only: retry a transient owner Telegram delivery failure
+ * up to twice. A duplicate owner preview is safer than losing an approval
+ * message; channel publication is NEVER retried here.
+ */
+export async function retryFailedDeliveries(store,time) {
+  const rows=(await store.stmt(
+    "SELECT id,payload,finished_at FROM cf_jobs WHERE kind='delivery' AND status='failed' ORDER BY finished_at DESC LIMIT 20"
+  ).all()).results||[];
+  for(const job of rows) {
+    const m=/^delivery-([a-f0-9]{20})-(\d+)(?:-retry-(\d))?$/.exec(job.id);
+    if(!m || Number(m[3]||0)>=2 || time-Number(job.finished_at)<2*60000)continue;
+    const saved=await store.draft(m[1]);
+    if(!saved || saved.version!==Number(m[2]) || saved.state!=='pending' || saved.expires_at<=time)continue;
+    await store.enqueue('delivery',JSON.parse(job.payload),
+      'delivery-'+m[1]+'-'+m[2]+'-retry-'+(Number(m[3]||0)+1));
   }
 }
 
@@ -649,13 +688,17 @@ export default {
       const store=new Store(env.DB);
       await store.recover();
       await store.stmt("INSERT INTO cf_meta(key,value) VALUES ('cron_heartbeat',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",String(now())).run();
-      await drain(c,store,'setup',1);
-      await drain(c,store,'control',3);
+      // Never let slow setup, webhook commands or publisher-breaking scans
+      // delay the 09/13/18/21 research slot.
       await schedule(c,store,event.scheduledTime);
       await retryScheduledFailures(c,store,event.scheduledTime);
-      await scheduleBreaking(c,store,event.scheduledTime);
-      await drain(c,store,'edit',1);
+      await retryFailedDeliveries(store,event.scheduledTime);
+      await drain(c,store,'delivery',2);
       await drain(c,store,'research',1);
+      await drain(c,store,'edit',1);
+      await drain(c,store,'control',3);
+      await drain(c,store,'setup',1);
+      await scheduleBreaking(c,store,event.scheduledTime);
     };
     ctx.waitUntil(work().catch(()=>console.warn('Scheduled queue interrupted')));
   },
