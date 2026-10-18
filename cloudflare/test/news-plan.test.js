@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {config} from '../src/core.js';
 import {env,fixture} from './helpers.js';
-import {schedule,scheduleBreaking} from '../src/worker.js';
+import {schedule,scheduleBreaking,retryScheduledFailures} from '../src/worker.js';
 import {breakingCandidates,breakingEligible,editionAtHour,editionDetails,localClock,
   newsroomBeat,rankEditorialEntries,REGULAR_HOURS} from '../src/news-plan.js';
 
@@ -84,4 +84,47 @@ test('Automatic breaking scan creates at most one additional candidate per Tbili
     assert.equal((await store.stmt('SELECT count(*) AS n FROM cf_slots WHERE slot=?',
       'breaking-day-2026-10-17').first()).n,1);
   } finally {globalThis.fetch=original;}
+});
+
+test('Gemini transient 503 automatically retries a missed morning slot once, idempotently',async()=>{
+  const {c,store}=await fixture();
+  const active={...c,schedule:true};
+  const start=Date.UTC(2026,9,18,5,0); // 09:00 Tbilisi
+  await store.enqueue('research',{query:'მნიშვნელოვანი მსოფლიო პოლიტიკური მოვლენა',
+    format:'STANDARD',edition:'morning'},'schedule-2026-10-18T09');
+  await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
+    'Gemini request failed (HTTP 503): UNAVAILABLE',start+2*60000,
+    'schedule-2026-10-18T09').run();
+  await retryScheduledFailures(active,store,start+20*60000);
+  await retryScheduledFailures(active,store,start+25*60000);
+  const first=(await store.stmt("SELECT id,status,payload FROM cf_jobs WHERE id LIKE 'schedule-2026-10-18T09%' ORDER BY id").all()).results;
+  assert.equal(first.length,2);
+  assert.equal(first[1].id,'schedule-2026-10-18T09-retry-1');
+  assert.equal(JSON.parse(first[1].payload).edition,'morning');
+  // Retry failed again transiently: grant exactly one further attempt.
+  await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
+    'Gemini request failed (HTTP 503): UNAVAILABLE',start+29*60000,
+    'schedule-2026-10-18T09-retry-1').run();
+  await retryScheduledFailures(active,store,start+41*60000);
+  await retryScheduledFailures(active,store,start+50*60000);
+  const second=(await store.stmt("SELECT id FROM cf_jobs WHERE id LIKE 'schedule-2026-10-18T09%' ORDER BY id").all()).results;
+  assert.equal(second.length,3);
+  assert.ok(second.some(x=>x.id==='schedule-2026-10-18T09-retry-2'));
+  await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
+    'Gemini request failed (HTTP 503): UNAVAILABLE',start+51*60000,
+    'schedule-2026-10-18T09-retry-2').run();
+  await retryScheduledFailures(active,store,start+64*60000);
+  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE 'schedule-2026-10-18T09%'").first()).n,3);
+});
+test('Permanent errors, quotas, other days and future scheduled jobs are not retried',async()=>{
+  const {c,store}=await fixture();
+  const active={...c,schedule:true},start=Date.UTC(2026,9,18,5,0);
+  await store.enqueue('research',{query:'abc',format:'STANDARD'},'schedule-2026-10-18T09');
+  await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
+    'Gemini free-tier quota reached (429)',start+60000,'schedule-2026-10-18T09').run();
+  await retryScheduledFailures(active,store,start+3600000);
+  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs").first()).n,1);
+  await store.stmt("UPDATE cf_jobs SET error=? WHERE id=?", 'Gemini request failed (HTTP 503)', 'schedule-2026-10-18T09').run();
+  await retryScheduledFailures(active,store,start+13*3600000);
+  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs").first()).n,1);
 });
