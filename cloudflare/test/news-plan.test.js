@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {config} from '../src/core.js';
 import {env,fixture} from './helpers.js';
-import {schedule,scheduleBreaking,retryScheduledFailures} from '../src/worker.js';
+import {schedule,scheduleBreaking,retryScheduledFailures,retryFailedDeliveries,drain} from '../src/worker.js';
 import {breakingCandidates,breakingEligible,editionAtHour,editionDetails,localClock,
   newsroomBeat,rankEditorialEntries,REGULAR_HOURS} from '../src/news-plan.js';
 
@@ -95,7 +95,7 @@ test('Gemini transient 503 automatically retries a missed morning slot once, ide
   await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
     'Gemini request failed (HTTP 503): UNAVAILABLE',start+2*60000,
     'schedule-2026-10-18T09').run();
-  await retryScheduledFailures(active,store,start+20*60000);
+  await retryScheduledFailures(active,store,start+5*60000);
   await retryScheduledFailures(active,store,start+25*60000);
   const first=(await store.stmt("SELECT id,status,payload FROM cf_jobs WHERE id LIKE 'schedule-2026-10-18T09%' ORDER BY id").all()).results;
   assert.equal(first.length,2);
@@ -127,4 +127,30 @@ test('Permanent errors, quotas, other days and future scheduled jobs are not ret
   await store.stmt("UPDATE cf_jobs SET error=? WHERE id=?", 'Gemini request failed (HTTP 503)', 'schedule-2026-10-18T09').run();
   await retryScheduledFailures(active,store,start+13*3600000);
   assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs").first()).n,1);
+});
+
+test('Clock-time scheduled jobs are claimed before older manual research backlog',async()=>{
+  const {store}=await fixture();
+  await store.enqueue('research',{query:'manual',format:'STANDARD'},'manual-research-1');
+  await store.enqueue('research',{query:'scheduled',format:'STANDARD'},'schedule-2026-10-18T18');
+  const first=await store.claim('research');
+  assert.equal(first.id,'schedule-2026-10-18T18');
+  await store.finish(first);
+  const second=await store.claim('research');
+  assert.equal(second.id,'manual-research-1');
+});
+test('Failed owner preview delivery can be retried without reposting or regenerating article',async()=>{
+  const {store}=await fixture(),start=Date.UTC(2026,9,18,14,0);
+  const p=(await import('./helpers.js')).payload();
+  const draft=await store.createDraft({event_key:'delivery-once',topic:'News'},p,3600000);
+  const id='delivery-'+draft.id+'-1';
+  await store.enqueue('delivery',{draftId:draft.id,version:1},id);
+  await store.stmt('UPDATE cf_jobs SET status=?,finished_at=?,error=? WHERE id=?',
+    'failed',start,'Temporary Telegram network problem',id).run();
+  await retryFailedDeliveries(store,start+3*60000);
+  await retryFailedDeliveries(store,start+4*60000);
+  const rows=(await store.stmt("SELECT id,kind,status FROM cf_jobs WHERE kind='delivery' ORDER BY id").all()).results;
+  assert.equal(rows.length,2);
+  assert.ok(rows.some(row=>row.id===id+'-retry-1'&&row.status==='queued'));
+  assert.equal((await store.draft(draft.id)).state,'pending');
 });
