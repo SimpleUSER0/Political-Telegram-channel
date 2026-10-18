@@ -140,3 +140,26 @@ test('Temporary Gemini 3.8 HTTP 503 triggers one Google Flash-Lite retry, no thi
     assert.match(requests[1],/gemini-3\.5-flash-lite/);
   }finally{globalThis.fetch=original;}
 });
+
+test('Free-text science and sport posts use a subject-neutral Gemini editorial policy',async()=>{
+  const {store}=await fixture();
+  const c=config({... (await setup()).c.env,AI_PROVIDER:'gemini',
+    GEMINI_MODEL:'gemini-3.8-flash',GEMINI_API_KEY:'offline-only',
+    MAX_DAILY_CALLS:'15'});
+  const original=globalThis.fetch;
+  globalThis.fetch=async(_url,options)=>{
+    const body=JSON.parse(options.body);
+    const policy=body.systemInstruction.parts[0].text;
+    assert.match(policy,/ANY lawful subject/);
+    assert.match(policy,/science, culture/);
+    assert.doesNotMatch(policy,/Cover world politics, diplomacy/);
+    return Response.json({candidates:[{finishReason:'STOP',
+      content:{parts:[{text:'{"passed":true}'}]}}],
+      usageMetadata:{promptTokenCount:12,candidatesTokenCount:3}});
+  };
+  try {
+    assert.deepEqual(await llm({...c,manualTopic:true},store,
+      'Check evidence for quantum physics, not politics',{},resultSchema),
+      {passed:true});
+  }finally{globalThis.fetch=original;}
+});
