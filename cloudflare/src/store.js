@@ -46,7 +46,7 @@ export class Store {
       ? " AND NOT EXISTS (SELECT 1 FROM cf_jobs WHERE status='running' AND kind IN ('research','edit'))"
       : '';
     return this.stmt(`UPDATE cf_jobs SET status='running',lease=?,started_at=?
-      WHERE id=(SELECT id FROM cf_jobs WHERE status='queued' AND kind=? ORDER BY created_at,id LIMIT 1)
+      WHERE id=(SELECT id FROM cf_jobs WHERE status='queued' AND kind=? ORDER BY CASE WHEN kind='research' AND id LIKE 'schedule-%' THEN 0 ELSE 1 END,created_at,id LIMIT 1)
       AND status='queued'${researchLock} RETURNING *`, lease, now(), kind).first();
   }
   async finish(job, error = null) {
