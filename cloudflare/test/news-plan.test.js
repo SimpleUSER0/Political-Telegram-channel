@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {config} from '../src/core.js';
 import {env,fixture} from './helpers.js';
-import {schedule,scheduleBreaking,retryScheduledFailures,retryFailedDeliveries,drain} from '../src/worker.js';
+import {schedule,scheduleBreaking,retryScheduledFailures,retryFailedDeliveries,recoverUndeliveredDrafts,drain} from '../src/worker.js';
 import {breakingCandidates,breakingEligible,editionAtHour,editionDetails,localClock,
   newsroomBeat,rankEditorialEntries,REGULAR_HOURS} from '../src/news-plan.js';
 
@@ -114,7 +114,17 @@ test('Gemini transient 503 automatically retries a missed morning slot once, ide
     'Gemini request failed (HTTP 503): UNAVAILABLE',start+51*60000,
     'schedule-2026-10-18T09-retry-2').run();
   await retryScheduledFailures(active,store,start+64*60000);
-  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE 'schedule-2026-10-18T09%'").first()).n,3);
+  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE 'schedule-2026-10-18T09%'").first()).n,4);
+  await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
+    'Gemini request failed (HTTP 503): UNAVAILABLE',start+65*60000,
+    'schedule-2026-10-18T09-retry-3').run();
+  await retryScheduledFailures(active,store,start+82*60000);
+  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE 'schedule-2026-10-18T09%'").first()).n,5);
+  await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
+    'Gemini request failed (HTTP 503): UNAVAILABLE',start+83*60000,
+    'schedule-2026-10-18T09-retry-4').run();
+  await retryScheduledFailures(active,store,start+100*60000);
+  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE 'schedule-2026-10-18T09%'").first()).n,5);
 });
 test('Permanent errors, quotas, other days and future scheduled jobs are not retried',async()=>{
   const {c,store}=await fixture();
@@ -153,4 +163,36 @@ test('Failed owner preview delivery can be retried without reposting or regenera
   assert.equal(rows.length,2);
   assert.ok(rows.some(row=>row.id===id+'-retry-1'&&row.status==='queued'));
   assert.equal((await store.draft(draft.id)).state,'pending');
+});
+
+test('Cron catches missed edition in full hour and up to 90 minutes, but never duplicates',async()=>{
+  const {c,store}=await fixture();
+  const active={...c,schedule:true,hours:REGULAR_HOURS};
+  const start=Date.UTC(2026,9,19,5,0);
+  await schedule(active,store,start+30*60000);
+  await schedule(active,store,start+80*60000);
+  await schedule(active,store,start+91*60000);
+  const jobs=(await store.stmt("SELECT id FROM cf_jobs WHERE id LIKE 'schedule-2026-10-19T09%'").all()).results;
+  assert.deepEqual(jobs.map(x=>x.id),['schedule-2026-10-19T09']);
+  const {store:missed}=await fixture();
+  await schedule(active,missed,start+91*60000);
+  assert.equal((await missed.stmt('SELECT COUNT(*) AS n FROM cf_jobs').first()).n,0);
+});
+
+test('Cron reconstructs interrupted owner photo delivery but never resends a proved preview',async()=>{
+  const {store}=await fixture();
+  const moment=Date.now();
+  const a=await store.createDraft({event_key:'unsent-'+crypto.randomUUID(),topic:'News'},(await import('./helpers.js')).payload(),3600000);
+  await store.stmt('UPDATE cf_drafts SET created_at=? WHERE id=?',moment-3*60000,a.id).run();
+  await recoverUndeliveredDrafts(store,moment);
+  await recoverUndeliveredDrafts(store,moment);
+  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE kind='delivery'").first()).n,1);
+  const b=await store.createDraft({event_key:'sent-'+crypto.randomUUID(),topic:'Sent'},(await import('./helpers.js')).payload(),3600000);
+  await store.stmt('UPDATE cf_drafts SET created_at=? WHERE id=?',moment-3*60000,b.id).run();
+  await store.audit('owner_draft_delivered',b,'123','42');
+  const c=await store.createDraft({event_key:'cached-'+crypto.randomUUID(),topic:'Cached'},(await import('./helpers.js')).payload(),3600000);
+  await store.stmt('UPDATE cf_drafts SET created_at=? WHERE id=?',moment-3*60000,c.id).run();
+  await store.stmt('INSERT INTO cf_media(draft_id,file_id) VALUES (?,?)',c.id,'photo-ok').run();
+  await recoverUndeliveredDrafts(store,moment);
+  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE kind='delivery'").first()).n,1);
 });

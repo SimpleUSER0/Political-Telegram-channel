@@ -5,7 +5,7 @@ import {workersAICall} from './workers-ai.js';
 import {discoverFeeds,feedImage,feedPublication} from './feeds.js';
 import {editorialCandidates,polishGeorgianArticle} from './editorial.js';
 import {GEORGIAN_STYLE_EXAMPLES,georgianQualityIssues,requireGeorgianQuality} from './georgian-quality.js';
-import {editionDetails,rankEditorialEntries} from './news-plan.js';
+import {editionDetails,rankEditorialEntries,localClock} from './news-plan.js';
 import {lookupRequestedArticles,rankRequestedArticles,MANUAL_PUBLISHER_DOMAINS} from './topic-search.js';
 
 const OWNER_EDITORIAL = `You are the owner's trusted Georgian-language Telegram draft editor.
@@ -334,7 +334,7 @@ covered by claim_ids. Reject unsupported assertions, missing uncertainty or stre
   return check;
 }
 
-export async function generate(c,store,query,format,edition='night',preferredUrl=null,manual=false) {
+export async function generate(c,store,query,format,edition='night',preferredUrl=null,manual=false,scheduled=false) {
   if (!c.research || missing(c,true).length) throw new Halt('Research is disabled or not configured');
   if (!['FLASH','QUICK','STANDARD','DEEP'].includes(format) || typeof query!=='string' ||
       query.trim().length<(manual?2:3) || query.length>1000 ||
@@ -358,8 +358,16 @@ export async function generate(c,store,query,format,edition='night',preferredUrl
   // Reserve the run only when the remaining daily call budget can cover an
   // entire three/four-call workflow; avoid a predictable partial paid run.
   const requiredCalls=usingFeeds?2:directSearch?4:4;
-  await store.requireCallCapacity(c.dailyCalls,requiredCalls);
-  await store.reserve('runs',c.dailyRuns);
+  // Keep enough budget for the owner's four unattended slots even if manual
+  // requests arrive first. Each remaining slot gets capacity for its initial
+  // attempt and one Gemini outage recovery (no extra paid/provider calls).
+  const upcoming=c.schedule && !scheduled
+    ? [...new Set(c.hours)].filter(h=>h>=localClock(now()).hour).length : 0;
+  const callCap=c.dailyCalls-4*upcoming, runCap=c.dailyRuns-2*upcoming;
+  if(!scheduled && (callCap<requiredCalls || runCap<1))
+    throw new Halt('Daily budget cannot cover a manual request; capacity reserved for scheduled editions');
+  await store.requireCallCapacity(scheduled?c.dailyCalls:callCap,requiredCalls);
+  await store.reserve('runs',scheduled?c.dailyRuns:runCap);
   stage='discovery';
   let searchTerms=null;
   if(directSearch){

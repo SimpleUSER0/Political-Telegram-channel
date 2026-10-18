@@ -101,10 +101,15 @@ export async function notify(c,draft,store) {
       caption,reply_markup:{inline_keyboard:buttons}});
     const fileId=sent?.photo?.at(-1)?.file_id;
     if(store && fileId)await store.stmt('INSERT OR IGNORE INTO cf_media(draft_id,file_id) VALUES (?,?)',draft.id,fileId).run();
+    if(store && draft.state==='pending' && sent?.message_id)
+      await store.audit('owner_draft_delivered',draft,c.ownerChat,String(sent.message_id));
     return sent;
   }
-  return tell(c,`მონახაზი ${draft.id}:${draft.version} · ${draft.state}${uncertainty}\n\n${articleText(payload.article)}`,
+  const sent=await tell(c,`მონახაზი ${draft.id}:${draft.version} · ${draft.state}${uncertainty}\n\n${articleText(payload.article)}`,
     {inline_keyboard:buttons});
+  if(store && draft.state==='pending' && sent?.message_id)
+    await store.audit('owner_draft_delivered',draft,c.ownerChat,String(sent.message_id));
+  return sent;
 }
 
 export async function publish(c,store,draftId,version) {
@@ -447,7 +452,7 @@ export async function drain(c,store,kind,limit=1) {
         await store.audit('webhook_setup_verified',null,'cloudflare-admin',job.id);
       }
       else if (kind==='research') {
-        const created=await generate(c,store,payload.query,payload.format,payload.edition||'night',payload.preferredUrl||null,Boolean(payload.manual));
+        const created=await generate(c,store,payload.query,payload.format,payload.edition||'night',payload.preferredUrl||null,Boolean(payload.manual),job.id.startsWith('schedule-'));
         // A notification error must not delete a completed draft or repeat paid research.
         try { await notify(c,created,store); }
         catch {
@@ -492,23 +497,28 @@ export async function drain(c,store,kind,limit=1) {
 
 export async function schedule(c,store,time) {
   if (!c.research || !c.schedule || !c.hours.length || missing(c,true).length) return;
-  const clock=localClock(time);
-  if (!c.hours.includes(clock.hour) || clock.minute>14) return;
-  const slot=clock.slot,edition=editionAtHour(clock.hour)||'night';
-  // A single atomic batch makes cron overlap and retry harmless.
-  await store.db.batch([
-    store.stmt('INSERT OR IGNORE INTO cf_slots(slot,created_at) VALUES (?,?)',slot,now()),
-    store.stmt("INSERT OR IGNORE INTO cf_jobs(id,kind,payload,created_at) VALUES (?,'research',?,?)",
-      'schedule-'+slot,JSON.stringify({query:REGULAR_QUERY,format:'STANDARD',edition}),now()),
-  ]);
+  // Catch an hour boundary or a delayed cron: every missed scheduled slot
+  // from the last 90 minutes is recovered once. The DB slot/job IDs are stable.
+  for(const candidateTime of [time-3600000,time]) {
+    const clock=localClock(candidateTime);
+    if(!c.hours.includes(clock.hour))continue;
+    const start=Date.parse(clock.slot+':00:00+04:00');
+    if(!Number.isFinite(start) || time<start || time-start>90*60000)continue;
+    const slot=clock.slot,edition=editionAtHour(clock.hour)||'night';
+    await store.db.batch([
+      store.stmt('INSERT OR IGNORE INTO cf_slots(slot,created_at) VALUES (?,?)',slot,now()),
+      store.stmt("INSERT OR IGNORE INTO cf_jobs(id,kind,payload,created_at) VALUES (?,'research',?,?)",
+        'schedule-'+slot,JSON.stringify({query:REGULAR_QUERY,format:'STANDARD',edition}),now()),
+    ]);
+  }
 }
 
 
 
 /**
  * Restore an unattended edition after temporary Gemini 503/502/504 failures.
- * Up to two unique follow-up attempts; do not replay completed, malformed,
- * duplicate or quota-denied jobs. Never republish without owner approval.
+ * Up to four bounded follow-up attempts with increasing delay. Never retry
+ * quota-denied jobs or republish without owner approval.
  * Stable IDs make 1-minute overlapping Cloudflare cron executions harmless.
  */
 export async function retryScheduledFailures(c,store,time) {
@@ -522,13 +532,37 @@ export async function retryScheduledFailures(c,store,time) {
     const match=/^schedule-(\d{4}-\d{2}-\d{2}T\d{2})(?:-retry-(\d))?$/.exec(job.id);
     if(!match)continue;
     const previous=Number(match[2]||0);
-    if(previous>=2 || !/Gemini request failed \(HTTP (?:502|503|504)\)/.test(job.error||''))continue;
+    if(previous>=4 || !/Gemini request failed \(HTTP (?:502|503|504)\)/.test(job.error||''))continue;
     const original=new Date(match[1]+':00:00+04:00').getTime();
-    if(!Number.isFinite(original)||time-original>12*3600000 || time-original<3*60000 ||
-       time-Number(job.finished_at)<3*60000)continue;
+    const backoff=[90000,180000,300000,900000][previous];
+    if(!Number.isFinite(original)||time-original>12*3600000 ||
+       time-original<90000 || time-Number(job.finished_at)<backoff)continue;
     const retryId='schedule-'+match[1]+'-retry-'+(previous+1);
     await store.enqueue('research',JSON.parse(job.payload),retryId);
   }
+}
+
+/**
+ * Repair an owner notification lost after the draft was saved but before
+ * notify()/enqueue('delivery') completed. A cached Telegram file_id or a
+ * delivery audit proves the preview was already sent. Never publish to channel.
+ */
+export async function recoverUndeliveredDrafts(store,time) {
+  const rows=(await store.stmt(
+    `SELECT d.id,d.version FROM cf_drafts d
+      LEFT JOIN cf_media m ON m.draft_id=d.id
+      WHERE d.state='pending' AND d.created_at BETWEEN ? AND ?
+        AND d.expires_at>?
+        AND m.file_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM cf_audit a
+          WHERE a.action='owner_draft_delivered' AND a.draft_id=d.id AND a.version=d.version)
+        AND NOT EXISTS (SELECT 1 FROM cf_jobs j
+          WHERE j.kind='delivery' AND j.id LIKE 'delivery-'||d.id||'-'||d.version||'%')
+      ORDER BY d.created_at LIMIT 8`,
+    time-3*3600000,time-2*60000,time).all()).results||[];
+  for(const row of rows)
+    await store.enqueue('delivery',{draftId:row.id,version:row.version},
+      'delivery-'+row.id+'-'+row.version);
 }
 
 /**
@@ -692,6 +726,7 @@ export default {
       // delay the 09/13/18/21 research slot.
       await schedule(c,store,event.scheduledTime);
       await retryScheduledFailures(c,store,event.scheduledTime);
+      await recoverUndeliveredDrafts(store,event.scheduledTime);
       await retryFailedDeliveries(store,event.scheduledTime);
       await drain(c,store,'delivery',2);
       await drain(c,store,'research',1);
