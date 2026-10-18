@@ -32,6 +32,16 @@ export class Store {
       jobId, kind, JSON.stringify(payload), now()).run();
     return jobId;
   }
+  async enqueueEdit(draftId,version,mode,jobId) {
+    // Only one preset may be waiting/working on a draft version. The SQL guard
+    // makes two fast button presses race safely; failed edits can be retried.
+    const result=await this.stmt(`INSERT OR IGNORE INTO cf_jobs(id,kind,payload,created_at)
+      SELECT ?,'edit',?,? WHERE NOT EXISTS (
+        SELECT 1 FROM cf_jobs WHERE kind='edit' AND status IN ('queued','running')
+          AND json_extract(payload,'$.draftId')=? AND json_extract(payload,'$.version')=?)`,
+      jobId,JSON.stringify({draftId,version,mode}),now(),draftId,version).run();
+    return Boolean(result.meta?.changes);
+  }
   async acceptUpdate(updateId, payload) {
     // Both insertions commit together. Re-delivery can never create a second job.
     await this.db.batch([

@@ -634,7 +634,7 @@ units. Preserve every existing claim_id and source_id exactly. Output only the J
       }
       if(articleText(article).length>950)throw new Halt('Draft exceeds the photo caption limit');
       const check={passed:true,unsupported_claims:[],missing_attributions:[],method:'publisher-review-and-local-validation'};
-      const payload={article,verification:packet,sources,selection:candidate,format,edition,scheduled,
+      const payload={article,verification:packet,sources,selection:candidate,format,edition,scheduled,manual_topic:manual,
         fact_check:check,checked_at:new Date().toISOString(),media:primary.image,
         primary_source_id:0,provider:c.provider,grounding:search.grounding || null};
       stage='draft-storage';
@@ -663,9 +663,66 @@ units. Preserve every existing claim_id and source_id exactly. Output only the J
   }
 }
 
-export async function editDraft(c,store,draft,title,body) {
+export const EDIT_MODES=Object.freeze(['shorter','longer','clearer','proofread']);
+const EDIT_MODE_INSTRUCTIONS={
+  shorter:'Make the Georgian post more concise. Remove repetition and secondary detail while preserving every supported key fact, attribution and nuance.',
+  longer:'Add useful context and explanation only where it is directly supported by the existing verified evidence. Do not add facts, filler or speculation.',
+  clearer:'Make the Georgian post easier to understand for a general reader. Explain relationships plainly without changing the reporting or adding facts.',
+  proofread:'Correct Georgian grammar, spelling and idiom only. Keep the meaning, emphasis and approximate length unchanged.',
+};
+export async function editDraft(c,store,draft,title,body,mode=null) {
   const payload=JSON.parse(draft.payload);
+  if(mode!==null){
+    if(!EDIT_MODES.includes(mode))throw new Halt('Unknown edit preset');
+    const original=payload.article,target=editionDetails(payload.edition);
+    const originalCount=editionWordCount(original);
+    if(payload.scheduled && mode==='shorter' && originalCount<=target.minWords)
+      throw new Halt(`ტექსტი უკვე მინიმალურ ზღვარზეა (${target.minWords} სიტყვა); შემოკლება გრაფიკის მოცულობას დაარღვევს`);
+    if(payload.scheduled && mode==='longer' && originalCount>=target.maxWords)
+      throw new Halt(`ტექსტი უკვე მაქსიმალურ ზღვარზეა (${target.maxWords} სიტყვა); გაფართოება გრაფიკის მოცულობას დაარღვევს`);
+    const direction=mode==='shorter'?'Aim for the lower end of the agreed range.':
+      mode==='longer'?'Aim for the upper end of the agreed range.':'Stay near the original length.';
+    const scheduleRule=payload.scheduled
+      ? `This scheduled ${target.name} edition must contain ${target.minWords}-${target.maxWords} whitespace-separated Georgian words across title and body. ${direction}`
+      : mode==='shorter'
+        ? `Make the title and body at least 15% shorter than the original while retaining the key supported fact.`
+        : mode==='longer'
+          ? `Make the title and body at least 15% longer than the original using only supported context.`
+          : 'Keep the total word count within 10% of the original.';
+    const revisionConfig={...c,manualTopic:Boolean(payload.manual_topic)};
+    await store.requireCallCapacity(nonScheduledCallLimit(revisionConfig),2);
+    const revised=await llm(revisionConfig,store,`${GEORGIAN_STYLE_EXAMPLES}
+
+Apply exactly this owner-selected edit: ${EDIT_MODE_INSTRUCTIONS[mode]}
+${scheduleRule}
+Use ONLY the supplied existing article and verified evidence packet. Keep all facts,
+dates, names, attribution and uncertainty accurate. Preserve claim_ids and source_ids
+exactly, in the same order. The full title and body must be under 950 UTF-16 units.
+Write natural Georgian. Never invent details or remove a qualification that changes meaning.
+Output only the required JSON object.`,
+      {article:original,evidence:payload.verification,edition_targets:target,mode},articleSchema);
+    if(JSON.stringify(revised.claim_ids)!==JSON.stringify(original.claim_ids) ||
+       JSON.stringify(revised.source_ids)!==JSON.stringify(original.source_ids))
+      throw new Halt('რედაქტირებამ ფაქტების ან წყაროების ბმა შეცვალა');
+    const polished=polishGeorgianArticle(revised);
+    validateArticle(polished,payload.verification,payload.sources);
+    requireGeorgianQuality(polished);
+    const changedCount=editionWordCount(polished);
+    if(payload.scheduled && !meetsEditionWordTarget(polished,payload.edition))
+      throw new Halt(`დაგეგმილი ტექსტი უნდა იყოს ${target.minWords}-${target.maxWords} სიტყვის ფარგლებში`);
+    if(!payload.scheduled && mode==='shorter' && changedCount>=originalCount)
+      throw new Halt('მოდელმა ტექსტი რეალურად არ შეამოკლა; მონახაზი უცვლელი დარჩა');
+    if(!payload.scheduled && mode==='longer' && changedCount<=originalCount)
+      throw new Halt('მოდელმა ტექსტი რეალურად არ გააფართოვა; მონახაზი უცვლელი დარჩა');
+    title=polished.title;body=polished.body;
+  }
+  if(typeof title!=='string' || typeof body!=='string' || !title.trim() || !body.trim() || title.length>250 || body.length>3500)
+    throw new Halt('რედაქტირებული სათაური ან ტექსტი არასწორია');
   const article={...payload.article,title,body};
+  if(payload.scheduled && !meetsEditionWordTarget(article,payload.edition)){
+    const target=editionDetails(payload.edition);
+    throw new Halt(`დაგეგმილი ტექსტის მოცულობა უნდა იყოს ${target.minWords}-${target.maxWords} სიტყვა (სათაური და ტექსტი ერთად)`);
+  }
   if(payload.media && articleText(article).length>1024)throw new Halt('ფოტოს ტექსტი მაქსიმუმ 1024 სიმბოლო უნდა იყოს.');
   payload.fact_check=await validateDraft(c,store,article,payload.verification,payload.sources);
   payload.article=article; payload.checked_at=new Date().toISOString();

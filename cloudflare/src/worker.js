@@ -112,6 +112,19 @@ export async function notify(c,draft,store) {
   return sent;
 }
 
+const EDIT_PRESETS=[
+  {id:'shorter',label:'შეამოკლე'},
+  {id:'longer',label:'გააფართოვე'},
+  {id:'clearer',label:'უფრო გასაგებად'},
+  {id:'proofread',label:'ქართული ენა'},
+];
+function editMenu(draftId,version) {
+  return {inline_keyboard:[
+    EDIT_PRESETS.slice(0,2).map(option=>({text:option.label,callback_data:`editopt:${draftId}:${version}:${option.id}`})),
+    EDIT_PRESETS.slice(2).map(option=>({text:option.label,callback_data:`editopt:${draftId}:${version}:${option.id}`})),
+  ]};
+}
+
 export async function publish(c,store,draftId,version) {
   if (!c.publish) throw new Halt('გამოქვეყნება გამორთულია: PUBLISH_ENABLED=false');
   if (missing(c,true).length) throw new Halt('კონფიგურაცია არასრულია');
@@ -252,13 +265,23 @@ async function handleControl(c,store,payload,job) {
     // Acknowledgement is best effort and never controls whether publication succeeds.
     try { await telegram(c,'answerCallbackQuery',{callback_query_id:callbackId}); } catch {}
     const match=/^(pub|edit|cancel):([a-f0-9]{20}):([1-9]\d{0,5})$/.exec(data);
-    if (!match) throw new Halt('Unknown callback');
+    const optionMatch=/^editopt:([a-f0-9]{20}):([1-9]\d{0,5}):(shorter|longer|clearer|proofread)$/.exec(data);
+    if(!match && !optionMatch)throw new Halt('Unknown callback');
+    if(optionMatch){
+      const [,draftId,rawVersion,mode]=optionMatch,version=Number(rawVersion);
+      const pending=await store.draft(draftId);
+      if(!pending || pending.version!==version || pending.state!=='pending' || pending.expires_at<=now())
+        throw new Halt('ეს ვერსია უკვე შეიცვალა ან ვადაგასულია');
+      const queued=await store.enqueueEdit(draftId,version,mode,`edit-option-${job.id}`);
+      if(!queued)return tell(c,'ამ მონახაზის ეს ვერსია უკვე რიგშია. დაელოდე დასრულებულ ვერსიას.');
+      return tell(c,'არჩეული ცვლილება რიგშია. დაგეგმილი პოსტის მოცულობა შეთანხმებულ დიაპაზონში დარჩება. დასრულებული ვერსია ხელახლა გამოჩნდება დასადასტურებლად.');
+    }
     const [,action,draftId,rawVersion]=match, version=Number(rawVersion);
     if (action==='pub') {
       await publish(c,store,draftId,version);
       return tell(c,'გამოქვეყნდა.');
     }
-    if (action==='edit') return tell(c,`რედაქტირებისთვის გამოაგზავნე:\n/edit ${draftId}:${version}\nახალი სათაური\n\nახალი ტექსტი\n\nახალი ფაქტები საჭიროებს ახალ კვლევას.`);
+    if (action==='edit') return tell(c,`აირჩიე სასურველი ცვლილება. ფაქტები და წყაროები უცვლელი დარჩება; დაგეგმილი პოსტის მოცულობა შეთანხმებულ დიაპაზონში დარჩება.\n\nთავისუფალი ჩასწორება: /edit ${draftId}:${version} და შემდეგ ახალი სათაური და ტექსტი.`,editMenu(draftId,version));
     const draft=await store.claimDraft(draftId,version,'cancelled',c.owner);
     if (!draft) throw new Halt('ეს ვერსია უკვე შეიცვალა ან დამუშავდა');
     await store.audit('cancel',draft,c.owner);
@@ -473,7 +496,9 @@ export async function drain(c,store,kind,limit=1) {
       } else if (kind==='edit') {
         draft=await store.claimDraft(payload.draftId,payload.version,'editing',c.owner);
         if (!draft) throw new Halt('მონახაზის ვერსია შეიცვალა ან ვადაგასულია');
-        const edited=await editDraft(c,store,draft,payload.title,payload.body);
+        const edited=payload.mode
+          ? await editDraft(c,store,draft,null,null,payload.mode)
+          : await editDraft(c,store,draft,payload.title,payload.body);
         try { await notify(c,edited,store); }
         catch {
           await store.enqueue('delivery',{draftId:edited.id,version:edited.version},
