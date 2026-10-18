@@ -499,12 +499,12 @@ export async function retryScheduledFailures(c,store,time) {
     "SELECT id,payload,error,finished_at FROM cf_jobs WHERE kind='research' AND status='failed' AND id LIKE ? ORDER BY finished_at LIMIT 12",
     prefix+'%').all()).results||[];
   for(const job of failures) {
-    const match=/^schedule-(\\d{4}-\\d{2}-\\d{2}T\\d{2})(?:-retry-(\\d))?$/.exec(job.id);
+    const match=/^schedule-(\d{4}-\d{2}-\d{2}T\d{2})(?:-retry-(\d))?$/.exec(job.id);
     if(!match)continue;
     const previous=Number(match[2]||0);
-    if(previous>=2 || !/Gemini request failed \\(HTTP (?:502|503|504)\\)/.test(job.error||''))continue;
+    if(previous>=2 || !/Gemini request failed \(HTTP (?:502|503|504)\)/.test(job.error||''))continue;
     const original=new Date(match[1]+':00:00+04:00').getTime();
-    if(!Number.isFinite(original)||time-original>8*3600000 || time-original<10*60000 ||
+    if(!Number.isFinite(original)||time-original>12*3600000 || time-original<10*60000 ||
        time-Number(job.finished_at)<10*60000)continue;
     const retryId='schedule-'+match[1]+'-retry-'+(previous+1);
     await store.enqueue('research',JSON.parse(job.payload),retryId);
