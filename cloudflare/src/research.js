@@ -337,7 +337,7 @@ covered by claim_ids. Reject unsupported assertions, missing uncertainty or stre
 export async function generate(c,store,query,format,edition='night',preferredUrl=null,manual=false) {
   if (!c.research || missing(c,true).length) throw new Halt('Research is disabled or not configured');
   if (!['FLASH','QUICK','STANDARD','DEEP'].includes(format) || typeof query!=='string' ||
-      query.trim().length<3 || query.length>1000 ||
+      query.trim().length<(manual?2:3) || query.length>1000 ||
       !['morning','midday','evening','night','breaking'].includes(edition))
     throw new Halt('Invalid research request');
   // User-requested topic posts may use an authoritative article from the previous
