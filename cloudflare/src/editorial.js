@@ -24,6 +24,12 @@ const TOPICS = [
 ];
 export function editorialTopic(query) {
   const value=String(query||'').trim();
+  // A worldwide daily briefing mentioning Georgia is NOT a Georgia-specific
+  // request. Otherwise TOPICS.georgia causes every foreign story to disappear.
+  if (/(?:მსოფლიო|საერთაშორისო|world|global|international)/iu.test(value) &&
+      /(?:საქართველ|georgia)/iu.test(value) &&
+      /(?:პოლიტიკ|გეოპოლიტიკ|ამბავ|მოვლენ|ახალ|news|brief|update)/iu.test(value))
+    return null;
   return TOPICS.find(topic=>topic.question.test(value)) || null;
 }
 export function editorialFeeds(query,configured) {
