@@ -20,8 +20,9 @@ test('/post text supports format hints, several lines and a sensible default',()
   assert.equal(manualPostRequest('/post ვრცლად ჩინეთის დიპლომატიაზე').format,'DEEP');
   assert.equal(manualPostRequest('/draft სასწრაფო სამხედრო ამბავი').format,'FLASH');
   assert.ok(manualPostRequest('/post').query.includes('პოლიტიკური'));
-  assert.match(manualPostRequest('a'.repeat(1001)).error,/3–1000/);
-  assert.match(manualPostRequest('ok').error,/3–1000/);
+  assert.match(manualPostRequest('a'.repeat(1001)).error,/2–1000/);
+  assert.deepEqual(manualPostRequest('AI'),{query:'AI',format:'STANDARD',edition:'night'});
+  assert.match(manualPostRequest('x').error,/2–1000/);
 });
 test('private manual requests queue draft generation without posting and do not affect the schedule',async()=>{
   const {e,store}=await fixture();
