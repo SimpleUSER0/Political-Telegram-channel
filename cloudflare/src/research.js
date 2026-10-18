@@ -5,7 +5,7 @@ import {workersAICall} from './workers-ai.js';
 import {discoverFeeds,feedImage,feedPublication} from './feeds.js';
 import {editorialCandidates,polishGeorgianArticle} from './editorial.js';
 import {GEORGIAN_STYLE_EXAMPLES,georgianQualityIssues,requireGeorgianQuality} from './georgian-quality.js';
-import {editionDetails,rankEditorialEntries,localClock} from './news-plan.js';
+import {editionDetails,rankEditorialEntries,localClock,newsroomBeat} from './news-plan.js';
 import {lookupRequestedArticles,rankRequestedArticles,MANUAL_PUBLISHER_DOMAINS} from './topic-search.js';
 
 const OWNER_EDITORIAL = `You are the owner's trusted Georgian-language Telegram draft editor.
@@ -251,13 +251,21 @@ export function rankedCandidates(candidates,catalog,c,history,time=now()) {
 
 // RSS publishers supply actual titles, URLs and dates: never ask an LLM to invent
 // the event metadata or pair a real source ID with an unrelated event.
-export function publisherCandidates(entries,history=[],max=3,edition='night') {
+export function publisherCandidates(entries,history=[],max=3,edition='night',scheduled=false) {
   const hash=value=>{
     let h=2166136261;
     for(let i=0;i<value.length;i++)h=Math.imul(h^value.charCodeAt(i),16777619);
     return (h>>>0).toString(16);
   };
-  return rankEditorialEntries(entries.filter(e=>e.url && e.title && Number.isFinite(Date.parse(e.published_at))),edition,history)
+  // Worldwide news comes first. A scheduled edition may use at most one
+  // Georgia-based story in a rolling eight real (not cancelled) drafts.
+  // Manual owner requests remain unrestricted by this editorial proportion.
+  const recent=history.filter(h=>h.state!=='cancelled').slice(0,8);
+  const georgiaAlreadyCovered=scheduled && recent.some(h=>
+    newsroomBeat({title:h.topic,url:h.url})==='georgia');
+  const eligible=entries.filter(e=>e.url && e.title && Number.isFinite(Date.parse(e.published_at)) &&
+    (!georgiaAlreadyCovered || newsroomBeat(e)!=='georgia'));
+  return rankEditorialEntries(eligible,edition,history)
     .map(e=>({event_key:'rss_'+hash(e.url)+'_'+new Date(e.published_at).toISOString().slice(0,10),
       topic:e.title,event_at:e.published_at,source_ids:[e.source_id]}))
     .filter(e=>!history.some(h=>normalized(h.event_key)===normalized(e.event_key)))
@@ -352,6 +360,13 @@ export async function generate(c,store,query,format,edition='night',preferredUrl
   const history = await store.history();
   const directSearch=Boolean(manual && c.provider==='gemini');
   const usingFeeds=c.discovery==='feeds' && !directSearch;
+  // Scheduled worldwide editions must never be interpreted as a country
+  // request merely because the query also mentions Georgia.
+  const feedQuery=scheduled?'':query;
+  // Specialist international publisher feeds keep genuine global political
+  // candidates available when the generic world RSS is dominated by lifestyle.
+  const feedConfig=scheduled?{...c,feeds:[...new Set([...c.feeds,
+    'guardian-us-politics','guardian-middle-east','guardian-ukraine','bbc-asia'])]}:c;
   // When the owner supplies any topic, Gemini searches real publisher articles
   // instead of relying on a predefined country list or the world RSS catalog.
   const modelConfig=manual?{...c,manualTopic:true}:c;
@@ -380,7 +395,7 @@ do not substitute a broader region or invent an event. Output one JSON string fi
     searchTerms=terms.terms;
   }
   const search = directSearch?await lookupRequestedArticles(c,searchTerms):
-    usingFeeds?await discoverFeeds(c,query):await llm(modelConfig,store,`Find specific
+    usingFeeds?await discoverFeeds(feedConfig,feedQuery):await llm(modelConfig,store,`Find specific
 publisher articles directly about the requested subject using trustworthy sources.
 Never substitute another subject or invent a source URL.`,
     {now:new Date().toISOString(),query,history},null,true);
@@ -388,7 +403,7 @@ Never substitute another subject or invent a source URL.`,
   if (!allowed.size) throw new Halt('Search returned no admissible publisher article URLs');
   // Bound model input and fairly represent every configured RSS publisher.
   const selectedUrls=[],counts=new Map();
-  const discoveredArticles=usingFeeds?editorialCandidates(search.articles || [],query):(search.articles||[]);
+  const discoveredArticles=usingFeeds?editorialCandidates(search.articles || [],feedQuery):(search.articles||[]);
   for(const story of discoveredArticles) {
     if(!allowed.has(story.url))continue;
     const publisher=story.feed || publisherGroup(story.url,c);
@@ -406,7 +421,7 @@ Never substitute another subject or invent a source URL.`,
         published_at:item.published_at,has_publisher_image:Boolean(item.image)}:{}),
     };
   });
-  const relevantEntries=usingFeeds?editorialCandidates(catalogEntries,query):catalogEntries;
+  const relevantEntries=usingFeeds?editorialCandidates(catalogEntries,feedQuery):catalogEntries;
   if(!relevantEntries.length)throw new Halt(manual?'ვერ მოიძებნა სანდო სტატია ზუსტად მოთხოვნილ თემაზე':'No recent relevant political news in accessible publisher feeds for this topic');
   const scopedEntries=preferredUrl?relevantEntries.filter(entry=>entry.url===preferredUrl):relevantEntries;
   if(!scopedEntries.length)throw new Halt('Requested breaking article is not in the current trusted publisher feed');
@@ -415,7 +430,7 @@ Never substitute another subject or invent a source URL.`,
   const topicMatches=directSearch?rankRequestedArticles(editorialCatalog,searchTerms,3):[];
   if(directSearch && !topicMatches.length)
     throw new Halt('მოთხოვნილ თემაზე შესაბამისი სტატია ვერ მოიძებნა. სხვა თემით არ ჩავანაცვლებ.');
-  const discovery = (usingFeeds||directSearch)?{candidates:publisherCandidates(directSearch?topicMatches:editorialCatalog,history,3,edition)}:
+  const discovery = (usingFeeds||directSearch)?{candidates:publisherCandidates(directSearch?topicMatches:editorialCatalog,history,3,edition,scheduled)}:
     await llm(modelConfig,store,`Select up to THREE credible, dated publisher stories CENTRAL to the owner's EXACT topic. For daily scheduled briefings select important political/geopolitical events.
 Follow the owner's /news or /post topic strictly when specific; for a broad daily-news query prefer
 elections, legislation, governments, diplomacy, security, wars, sanctions, protests and major
