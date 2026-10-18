@@ -1,6 +1,14 @@
 import {Halt,readText,sourceUrl} from './core.js';
 import {discoverFeeds} from './feeds.js';
 
+// Topic posts can use established reporting across domains, not just four
+// political RSS feeds. All returned URLs still pass sourceUrl's domain guard.
+export const MANUAL_PUBLISHER_DOMAINS=Object.freeze([
+ 'apnews.com','reuters.com','japantimes.co.jp','theverge.com','techcrunch.com',
+ 'arstechnica.com','nature.com','science.org','sciencedaily.com',
+ 'nasa.gov','britannica.com','smithsonianmag.com','nationalgeographic.com',
+ 'who.int','un.org','phys.org','ign.com','espn.com',
+]);
 // Public GDELT DOC 2.0 indexes publisher URLs. It does not establish the article's
 // publication date or factual claims: these come from fetching the real publisher.
 // This fixed-origin, keyless lookup allows any owner-specified topic and does not
@@ -43,18 +51,30 @@ export function parseTopicIndex(response,domains) {
   }
   return articles;
 }
+const RELATED_TOPIC_WORDS={
+  japan:['japan','japanese','tokyo','takaichi','ishiba','kishida','yasukuni'],
+  china:['china','chinese','beijing','xi','taiwan'],
+  ukraine:['ukraine','ukrainian','kyiv','zelensky'],
+  russia:['russia','russian','moscow','putin','kremlin'],
+  georgia:['georgia','georgian','tbilisi','kobakhidze','ivanishvili'],
+  ai:['ai','artificial intelligence','openai','gemini','chatgpt'],
+  gaming:['game','gaming','playstation','xbox','nintendo','sony'],
+  physics:['physics','quantum','particle','scientist'],
+};
 export function rankRequestedArticles(articles,searchTerms,max=3) {
   // Never select a random world-politics story as a substitute.
   const tokens=String(searchTerms).toLowerCase().split(/\W+/u)
     .filter(x=>x.length>3 && !['news','latest','about','from','with','politics','political'].includes(x));
   if(!tokens.length)return [];
+  const words=new Set(tokens.flatMap(word=>[word,...(RELATED_TOPIC_WORDS[word]||[])]));
   const ranked=articles.map(article=>{
     const title=String(article.title||'').toLowerCase();
-    const matched=tokens.filter(word=>title.includes(word)).length;
+    const matched=[...words].filter(word=>title.includes(word)).length;
     return {article,matched};
   });
-  const hasDirectMatch=ranked.some(x=>x.matched>0);
-  return ranked.filter(x=>hasDirectMatch?x.matched>0:['gdelt-index','guardian-api','bing-index'].includes(x.article.feed))
+  // The index is NOT an instruction to invent relevance. Without even one
+  // headline match, reject the topic rather than selecting random politics.
+  return ranked.filter(x=>x.matched>0)
     .sort((a,b)=>b.matched-a.matched||
       Date.parse(b.article.published_at)-Date.parse(a.article.published_at))
     .slice(0,max).map(x=>x.article);
@@ -138,7 +158,7 @@ export async function lookupRequestedArticles(c,englishKeywords) {
     external=await bingTopicLookup(c,englishKeywords);
     if(external.length)channel='bing-news-rss';
   }catch{}
-  if(!external.length){
+  if(!rankRequestedArticles(external,englishKeywords,1).length){
     try{
       const response=await fetch(topicLookupUrl(englishKeywords),{
         signal:AbortSignal.timeout(4500),headers:{Accept:'application/json'}});
@@ -149,7 +169,7 @@ export async function lookupRequestedArticles(c,englishKeywords) {
     }catch{}
   }
   // Optional publisher API, only when a valid developer key is configured.
-  if(!external.length && c.env.GUARDIAN_API_KEY){
+  if(!rankRequestedArticles(external,englishKeywords,1).length && c.env.GUARDIAN_API_KEY){
     try{
       external=await guardianTopicLookup(c,englishKeywords);
       if(external.length)channel='guardian-open-platform';
@@ -157,15 +177,16 @@ export async function lookupRequestedArticles(c,englishKeywords) {
   }
   // Fallback publisher feeds must STILL be matched to the owner's English
   // subject. A generic world-politics headline is never a valid substitute.
-  if(!external.length){
+  if(!rankRequestedArticles(external,englishKeywords,1).length){
     try{
-      const rss=await discoverFeeds(c,'');
+      const rss=await discoverFeeds(c,englishKeywords);
       external=rss.articles.map(({url,title,summary,published_at,image,feed})=>
         ({url,title,summary,published_at,image,feed}));
       if(external.length)channel='publisher-rss-fallback';
     }catch{}
   }
-  if(!external.length)throw new Halt('No accessible articles for requested topic');
+  if(!external.length || !rankRequestedArticles(external,englishKeywords,1).length)
+    throw new Halt('No indexed publisher article actually matches the requested topic');
   const articles=[...new Map(external.map(a=>[a.url,a])).values()];
   return {articles,provider:channel,
     grounding:{kind:'independent-news-index',index:channel},

@@ -20,7 +20,7 @@ test('Public index metadata is not publisher-reported publication proof',()=>{
  assert.equal(docs.length,2);
  assert.equal(docs[0].published_at,'2026-10-17T20:00:00.000Z');
  assert.deepEqual(rankRequestedArticles(docs,'Japan election'),[docs[0]]);
- assert.equal(rankRequestedArticles(docs,'Peru constitution').length,2); // full-text index fallback; AI must verify actual article relevance
+ assert.equal(rankRequestedArticles(docs,'Peru constitution').length,0); // never pick unrelated articles
 });
 test('Topic candidates cannot fall back to unrelated politics to satisfy a post quota',()=>{
  const docs=[
@@ -94,4 +94,17 @@ test('Owner-requested seven-day sources include recent real publisher stories ex
    assert.equal(week.length,1);
    assert.equal(week[0].url,'https://apnews.com/article/japan-takaichi-politics');
  }finally{globalThis.fetch=original;}
+});
+
+test('Manual requests may concern physics, football, gaming and science without political restriction',()=>{
+  const items=[
+    {title:'Researchers explain quantum physics discovery',published_at:'2026-10-17T10:00:00Z'},
+    {title:'New Xbox gaming console release',published_at:'2026-10-17T09:00:00Z'},
+    {title:'Football world cup qualification',published_at:'2026-10-17T08:00:00Z'},
+    {title:'Political talks between foreign ministers',published_at:'2026-10-17T07:00:00Z'},
+  ];
+  assert.deepEqual(rankRequestedArticles(items,'quantum physics').map(x=>x.title),[items[0].title]);
+  assert.deepEqual(rankRequestedArticles(items,'Xbox gaming').map(x=>x.title),[items[1].title]);
+  assert.deepEqual(rankRequestedArticles(items,'football cup').map(x=>x.title),[items[2].title]);
+  assert.deepEqual(rankRequestedArticles(items,'physics quantum').some(x=>x===items[3]),false);
 });

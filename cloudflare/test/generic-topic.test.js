@@ -38,7 +38,7 @@ test('Any country searches public indexed publisher URLs, never Gemini paid Goog
   };
   try{
     await assert.rejects(generate(c,store,'ახალ ზელანდიაში პოლიტიკური პროცესები','STANDARD','night',null,true),
-      /No supported photo-backed political story|Source network failure|No suitable/);
+      /მოთხოვნილ თემაზე შესაბამისი|No supported photo-backed political story|Source network failure|No suitable/);
     assert.ok(requests.some(x=>x.includes('api.gdeltproject.org')));
     assert.ok(requests.every(x=>!x.includes('unrelated-russia')));
     assert.equal((await store.stmt('SELECT count(*) AS n FROM cf_drafts').first()).n,0);
