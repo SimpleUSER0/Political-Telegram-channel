@@ -365,7 +365,7 @@ export async function generate(c,store,query,format,edition='night',preferredUrl
     ? [...new Set(c.hours)].filter(h=>h>=localClock(now()).hour).length : 0;
   const callCap=c.dailyCalls-4*upcoming, runCap=c.dailyRuns-2*upcoming;
   if(!scheduled && (callCap<requiredCalls || runCap<1))
-    throw new Halt('Daily budget reserved for upcoming scheduled editions');
+    throw new Halt('Daily budget cannot cover a manual request; capacity reserved for scheduled editions');
   await store.requireCallCapacity(scheduled?c.dailyCalls:callCap,requiredCalls);
   await store.reserve('runs',scheduled?c.dailyRuns:runCap);
   stage='discovery';
