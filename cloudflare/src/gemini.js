@@ -72,10 +72,11 @@ export async function geminiCall(c,store,day,instruction,data,schema,search) {
     body:JSON.stringify(body),signal:AbortSignal.timeout(110000),
   });
   let response=await send(c.model);
-  // Free Gemini Flash and Flash-Lite have separate model quotas. If primary
-  // Flash is exhausted, try one Google-hosted free Lite model; never paid tiers,
+  // Gemini Flash and Flash-Lite have separate model quotas. If primary Flash
+  // is exhausted or temporarily unavailable (429/503), retry ONCE on Google's
+  // free Lite model; never paid tiers,
   // external providers, recursive retries or an unbounded fallback chain.
-  if(response.status===429 && c.model==='gemini-3.8-flash' && !search) {
+  if([429,503].includes(response.status) && c.model==='gemini-3.8-flash' && !search) {
     await response.body?.cancel();
     await store.reserve('calls',c.dailyCalls);
     response=await send('gemini-3.5-flash-lite');
