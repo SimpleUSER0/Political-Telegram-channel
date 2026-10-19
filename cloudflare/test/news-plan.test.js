@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {config} from '../src/core.js';
 import {env,fixture} from './helpers.js';
 import {schedule,scheduleBreaking,retryScheduledFailures,retryFailedDeliveries,recoverUndeliveredDrafts,drain} from '../src/worker.js';
-import {repairScheduledLength} from '../src/research.js';
+import {repairScheduledLength,draftLengthGuidance} from '../src/research.js';
 import {breakingCandidates,breakingEligible,editionAtHour,editionDetails,editionWordCount,meetsEditionWordTarget,localClock,
   newsroomBeat,rankEditorialEntries,REGULAR_HOURS} from '../src/news-plan.js';
 
@@ -48,6 +48,13 @@ test('a scheduled edition still fails closed after the bounded second correction
     calls++;return makeArticle(70);
   }),/Scheduled draft length outside 90-115 words/);
   assert.equal(calls,2);
+});
+test('scheduled draft instructions make the agreed word range override general brevity advice',()=>{
+  const scheduled=draftLengthGuidance('evening',true),manual=draftLengthGuidance('evening',false);
+  assert.match(scheduled,/90-115 whitespace-separated Georgian words/);
+  assert.match(scheduled,/does not apply to scheduled editions/);
+  assert.match(manual,/1-3 very short clear Georgian sentences/);
+  assert.doesNotMatch(scheduled,/Prefer 1-3 very short clear Georgian sentences/);
 });
 test('One deterministic regular research job per slot with correct editorial edition',async()=>{
   const {c,store}=await fixture();

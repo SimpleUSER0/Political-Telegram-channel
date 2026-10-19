@@ -99,6 +99,12 @@ export async function repairScheduledLength(article,edition,revise,normalize=val
   return current;
 }
 
+export function draftLengthGuidance(edition,scheduled) {
+  if(!scheduled)return 'Prefer 1-3 very short clear Georgian sentences over 3 paragraphs of filler.';
+  const target=editionDetails(edition);
+  return `SCHEDULED EDITION LENGTH IS MANDATORY: title and body together must contain ${target.minWords}-${target.maxWords} whitespace-separated Georgian words. Aim for ${Math.round((target.minWords+target.maxWords)/2)} words in 2-3 concise paragraphs. General advice to use only 1-3 short sentences does not apply to scheduled editions. Use all useful, distinct facts and context supported by the evidence; if the source cannot support the minimum without filler or inference, reject this candidate.`;
+}
+
 export async function llm(c, store, instruction, data, schema = null, search = false) {
   const problems = missing(c, true);
   if (problems.length) throw new Halt('Research configuration incomplete');
@@ -574,9 +580,9 @@ factual contradictions, unsupported assertions, or repetition without material n
       validatePacket(packet,sources,c);
       stage='draft';
       const generatedArticle=await llm(budgetedModelConfig,store,`${GEORGIAN_STYLE_EXAMPLES}\n\nWrite a natural, precise Georgian Telegram post on the REQUESTED SUBJECT based EXCLUSIVELY on the
-evidence packet. Strong informative headline, direct news lead, 2-3 short coherent paragraphs;
+evidence packet. Strong informative headline, direct news lead, 2-3 concise coherent paragraphs;
 2-4 useful facts explaining what happened, who is involved and why it matters.
-Prefer 1-3 very short clear Georgian sentences over 3 paragraphs of filler.
+${draftLengthGuidance(edition,scheduled)}
 If a name or place cannot be expressed grammatically, retain its original spelling.
 NEVER paraphrase without real information. NEVER repeat a sentence. Use natural Georgian
 word order, correct subject and object case, and no made-up geopolitical conclusions.
