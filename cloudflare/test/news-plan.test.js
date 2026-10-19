@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {config} from '../src/core.js';
 import {env,fixture} from './helpers.js';
 import {schedule,scheduleBreaking,retryScheduledFailures,retryFailedDeliveries,recoverUndeliveredDrafts,drain} from '../src/worker.js';
+import {repairScheduledLength} from '../src/research.js';
 import {breakingCandidates,breakingEligible,editionAtHour,editionDetails,editionWordCount,meetsEditionWordTarget,localClock,
   newsroomBeat,rankEditorialEntries,REGULAR_HOURS} from '../src/news-plan.js';
 
@@ -28,6 +29,25 @@ test('scheduled post word targets match each agreed edition and count title plus
     assert.equal(meetsEditionWordTarget(short,edition),false);
     assert.equal(meetsEditionWordTarget(long,edition),false);
   }
+});
+test('a scheduled edition gets at most two measured length corrections',async()=>{
+  const makeArticle=count=>({title:'სათაური',body:Array(count-1).fill('ამბავი').join(' '),claim_ids:[0],source_ids:[0]});
+  let calls=0;
+  const repaired=await repairScheduledLength(makeArticle(20),'evening',async(_article,{wordCount,attempt})=>{
+    calls++;assert.equal(attempt,calls-1);assert.equal(wordCount,calls===1?20:70);
+    return makeArticle(calls===1?70:100);
+  });
+  assert.equal(calls,2);
+  assert.equal(editionWordCount(repaired),100);
+  assert.equal(meetsEditionWordTarget(repaired,'evening'),true);
+});
+test('a scheduled edition still fails closed after the bounded second correction',async()=>{
+  const makeArticle=count=>({title:'სათაური',body:Array(count-1).fill('ამბავი').join(' '),claim_ids:[0],source_ids:[0]});
+  let calls=0;
+  await assert.rejects(repairScheduledLength(makeArticle(20),'evening',async()=>{
+    calls++;return makeArticle(70);
+  }),/Scheduled draft length outside 90-115 words/);
+  assert.equal(calls,2);
 });
 test('One deterministic regular research job per slot with correct editorial edition',async()=>{
   const {c,store}=await fixture();

@@ -82,6 +82,23 @@ export function isEditorialCandidateFailure(error) {
   return error instanceof Halt && EDITORIAL_CANDIDATE_FAILURE.test(error.message);
 }
 
+// Give a scheduled edition one bounded follow-up if the first resize still
+// misses its agreed range. The caller reserves API capacity for each attempt.
+export async function repairScheduledLength(article,edition,revise,normalize=value=>value) {
+  const target=editionDetails(edition);
+  let current=article;
+  for(let attempt=0;attempt<2 && !meetsEditionWordTarget(current,edition);attempt++) {
+    const wordCount=editionWordCount(current),revised=await revise(current,{target,wordCount,attempt});
+    if(JSON.stringify(revised.claim_ids)!==JSON.stringify(current.claim_ids) ||
+       JSON.stringify(revised.source_ids)!==JSON.stringify(current.source_ids))
+      throw new Halt('Scheduled length revision changed verified source or claim IDs');
+    current=await normalize(revised);
+  }
+  if(!meetsEditionWordTarget(current,edition))
+    throw new Halt(`Scheduled draft length outside ${target.minWords}-${target.maxWords} words`);
+  return current;
+}
+
 export async function llm(c, store, instruction, data, schema = null, search = false) {
   const problems = missing(c, true);
   if (problems.length) throw new Halt('Research configuration incomplete');
@@ -614,27 +631,33 @@ Do not pad word counts. Output ONLY the required JSON object.`,
       }
       requireGeorgianQuality(article);
       if(scheduled && !meetsEditionWordTarget(article,edition)){
-        const target=editionDetails(edition),initialCount=editionWordCount(article);
-        await store.requireCallCapacity(budgetedModelConfig.callLimit,1);
         stage='edition-length-revision';
-        const revised=await llm(budgetedModelConfig,store,`${GEORGIAN_STYLE_EXAMPLES}
+        article=await repairScheduledLength(article,edition,async(current,{target,wordCount,attempt})=>{
+          await store.requireCallCapacity(budgetedModelConfig.callLimit,1);
+          const midpoint=Math.round((target.minWords+target.maxWords)/2);
+          const delta=midpoint-wordCount;
+          const adjustment=delta>0
+            ? `The current draft has ${wordCount} words, so add about ${delta} useful words.`
+            : `The current draft has ${wordCount} words, so remove about ${Math.abs(delta)} words.`;
+          return llm(budgetedModelConfig,store,`${GEORGIAN_STYLE_EXAMPLES}
 
 You are resizing a scheduled Georgian news draft to its agreed edition length.
-Rewrite the draft using ONLY the supplied verified evidence packet and the existing
-article. Count the title and body together. The exact target is ${target.minWords}-${target.maxWords}
-Georgian words; aim for the midpoint. Add only useful context directly supported by the
-evidence, remove repetition and never invent or infer facts. Keep the title informative,
-the Georgian natural, the post concise, and the complete title plus body under 950 UTF-16
-units. Preserve every existing claim_id and source_id exactly. Output only the JSON object.`,
-          {evidence:packet,article,word_count:initialCount,edition_targets:target},articleSchema);
-        if(JSON.stringify(revised.claim_ids)!==JSON.stringify(article.claim_ids) ||
-           JSON.stringify(revised.source_ids)!==JSON.stringify(article.source_ids))
-          throw new Halt('Scheduled length revision changed verified source or claim IDs');
-        article=polishGeorgianArticle(revised);
-        validateArticle(article,packet,sources);
-        requireGeorgianQuality(article);
-        if(!meetsEditionWordTarget(article,edition))
-          throw new Halt(`Scheduled draft length outside ${target.minWords}-${target.maxWords} words`);
+Rewrite the draft using ONLY the supplied verified evidence packet and existing article.
+Count the title and body together. The exact target is ${target.minWords}-${target.maxWords}
+Georgian words; aim for ${midpoint}. ${adjustment}
+${attempt===1?'The previous resize still missed the required range. Follow the measured word count carefully.':''}
+Add only useful context directly supported by the evidence; remove repetition and never
+invent or infer facts. Keep the title informative, Georgian natural, and the complete
+title plus body under 950 UTF-16 units. Preserve every claim_id and source_id exactly.
+Output only the JSON object.`,
+          {evidence:packet,article:current,word_count:wordCount,edition_targets:target},articleSchema);
+        },async revised=>{
+          const polished=polishGeorgianArticle(revised);
+          validateArticle(polished,packet,sources);
+          requireGeorgianQuality(polished);
+          return polished;
+        });
+        stage='source-backed-draft';
       }
       if(articleText(article).length>950)throw new Halt('Draft exceeds the photo caption limit');
       const check={passed:true,unsupported_claims:[],missing_attributions:[],method:'publisher-review-and-local-validation'};
