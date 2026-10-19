@@ -22,6 +22,15 @@ test('Public index metadata is not publisher-reported publication proof',()=>{
  assert.deepEqual(rankRequestedArticles(docs,'Japan election'),[docs[0]]);
  assert.equal(rankRequestedArticles(docs,'Peru constitution').length,0); // never pick unrelated articles
 });
+test('Broad Middle East searches accept relevant regional reporting without matching East Asia noise',()=>{
+ const docs=[
+  {title:'Iran and Israel trade fire as ceasefire talks resume',url:'https://www.aljazeera.com/news/1',published_at:'2026-10-19T14:00:00Z'},
+  {title:'East Asian leaders meet for regional summit',url:'https://www.dw.com/news/2',published_at:'2026-10-19T13:00:00Z'},
+  {title:'Middle-class tax relief announced',url:'https://www.france24.com/news/3',published_at:'2026-10-19T12:00:00Z'},
+ ];
+ assert.deepEqual(rankRequestedArticles(docs,'Middle East current developments'),[docs[0]]);
+});
+
 test('Topic candidates cannot fall back to unrelated politics to satisfy a post quota',()=>{
  const docs=[
    {title:'US sanctions on Russia',url:'https://www.bbc.co.uk/news/articles/1',published_at:'2026-10-17T20:00:00.000Z'},

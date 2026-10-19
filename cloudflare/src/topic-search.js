@@ -8,6 +8,7 @@ export const MANUAL_PUBLISHER_DOMAINS=Object.freeze([
  'arstechnica.com','nature.com','science.org','sciencedaily.com',
  'nasa.gov','britannica.com','smithsonianmag.com','nationalgeographic.com',
  'who.int','un.org','phys.org','ign.com','espn.com',
+ 'aljazeera.com','france24.com','dw.com',
 ]);
 // Public GDELT DOC 2.0 indexes publisher URLs. It does not establish the article's
 // publication date or factual claims: these come from fetching the real publisher.
@@ -60,13 +61,22 @@ const RELATED_TOPIC_WORDS={
   ai:['ai','artificial intelligence','openai','gemini','chatgpt'],
   gaming:['game','gaming','playstation','xbox','nintendo','sony'],
   physics:['physics','quantum','particle','scientist'],
+  middle_east:['israel','israeli','iran','iranian','gaza','palestine','palestinian',
+    'lebanon','lebanese','hezbollah','yemen','houthi','syria','syrian','hamas',
+    'west bank','saudi arabia','red sea','gulf','ceasefire'],
 };
 export function rankRequestedArticles(articles,searchTerms,max=3) {
   // Never select a random world-politics story as a substitute.
   const tokens=String(searchTerms).toLowerCase().split(/\W+/u)
     .filter(x=>x.length>3 && !['news','latest','about','from','with','politics','political'].includes(x));
   if(!tokens.length)return [];
-  const words=new Set(tokens.flatMap(word=>[word,...(RELATED_TOPIC_WORDS[word]||[])]));
+  // Treat the broad regional phrase as its commonly reported country/issue
+  // names. Do not count the generic word "east" alone (which matches East Asia)
+  // or "middle" (which matches middle-class stories) as topical evidence.
+  const middleEast=tokens.includes('middle') && tokens.includes('east');
+  const relevantTokens=middleEast?tokens.filter(x=>x!=='middle'&&x!=='east'):tokens;
+  const words=new Set(relevantTokens.flatMap(word=>[word,...(RELATED_TOPIC_WORDS[word]||[])]));
+  if(middleEast)for(const word of RELATED_TOPIC_WORDS.middle_east)words.add(word);
   const ranked=articles.map(article=>{
     const title=String(article.title||'').toLowerCase();
     const matched=[...words].filter(word=>title.includes(word)).length;
