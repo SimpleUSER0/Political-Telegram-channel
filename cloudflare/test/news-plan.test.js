@@ -73,7 +73,10 @@ test('Automatic breaking scan creates at most one additional candidate per Tbili
   const c=config({...e,DISCOVERY_MODE:'feeds',
     SOURCE_DOMAINS:'bbc.co.uk,bbc.com,theguardian.com,civil.ge',
     SOURCE_FEEDS:'bbc-world,guardian-world,civil-ge',SCHEDULE_ENABLED:'true'});
-  const time=Date.UTC(2026,9,17,6,30),date=new Date(time-5*60000).toUTCString();
+  const localNow=new Date(Date.now()+4*3600000);
+  localNow.setUTCMinutes(30,0,0);
+  if(new Date(Date.now()+4*3600000).getUTCMinutes()<30)localNow.setUTCHours(localNow.getUTCHours()-1);
+  const time=localNow.getTime()-4*3600000,date=new Date(time-5*60000).toUTCString(),day=localClock(time).day;
   const xml='<rss><channel><item><title>President resigns after attempted coup</title>'+
     '<link>https://www.bbc.co.uk/news/articles/high-impact-report</link>'+
     '<pubDate>'+date+'</pubDate></item></channel></rss>';
@@ -88,13 +91,13 @@ test('Automatic breaking scan creates at most one additional candidate per Tbili
     await scheduleBreaking(c,store,time+3600000);
     const rows=(await store.stmt("SELECT id,payload FROM cf_jobs WHERE kind='research'").all()).results;
     assert.equal(rows.length,1);
-    assert.equal(rows[0].id,'breaking-2026-10-17-auto');
+    assert.equal(rows[0].id,'breaking-'+day+'-auto');
     const payload=JSON.parse(rows[0].payload);
     assert.equal(payload.edition,'breaking');
     assert.equal(payload.preferredUrl,'https://www.bbc.co.uk/news/articles/high-impact-report');
     assert.ok(requested.length>=1);
     assert.equal((await store.stmt('SELECT count(*) AS n FROM cf_slots WHERE slot=?',
-      'breaking-day-2026-10-17').first()).n,1);
+      'breaking-day-'+day).first()).n,1);
   } finally {globalThis.fetch=original;}
 });
 
@@ -149,6 +152,20 @@ test('Permanent errors, quotas, other days and future scheduled jobs are not ret
   await store.stmt("UPDATE cf_jobs SET error=? WHERE id=?", 'Gemini request failed (HTTP 503)', 'schedule-2026-10-18T09').run();
   await retryScheduledFailures(active,store,start+13*3600000);
   assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs").first()).n,1);
+});
+
+test('one incomplete scheduled Gemini response is retried once, while a second failure stops',async()=>{
+  const {c,store}=await fixture(),active={...c,schedule:true},start=Date.UTC(2026,9,18,5,0);
+  const id='schedule-2026-10-18T09';
+  await store.enqueue('research',{query:'scheduled',format:'STANDARD'},id);
+  await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
+    'Gemini response incomplete (OTHER)',start+60000,id).run();
+  await retryScheduledFailures(active,store,start+3*60000);
+  assert.equal((await store.stmt("SELECT status FROM cf_jobs WHERE id=?",id+'-retry-1').first()).status,'queued');
+  await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
+    'Gemini response incomplete (OTHER)',start+4*60000,id+'-retry-1').run();
+  await retryScheduledFailures(active,store,start+8*60000);
+  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE ?",id+'%').first()).n,2);
 });
 
 test('Clock-time scheduled jobs are claimed before older manual research backlog',async()=>{

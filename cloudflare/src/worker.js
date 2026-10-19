@@ -541,9 +541,9 @@ export async function schedule(c,store,time) {
 
 
 /**
- * Restore an unattended edition after temporary Gemini 503/502/504 failures.
- * Up to four bounded follow-up attempts with increasing delay. Never retry
- * quota-denied jobs or republish without owner approval.
+ * Restore an unattended edition after temporary Gemini outages or one
+ * incomplete model response. HTTP outages get bounded retries; malformed,
+ * safety-blocked and quota-denied results are never retried.
  * Stable IDs make 1-minute overlapping Cloudflare cron executions harmless.
  */
 export async function retryScheduledFailures(c,store,time) {
@@ -557,7 +557,9 @@ export async function retryScheduledFailures(c,store,time) {
     const match=/^schedule-(\d{4}-\d{2}-\d{2}T\d{2})(?:-retry-(\d))?$/.exec(job.id);
     if(!match)continue;
     const previous=Number(match[2]||0);
-    if(previous>=4 || !/Gemini request failed \(HTTP (?:502|503|504)\)/.test(job.error||''))continue;
+    const httpOutage=/Gemini request failed \(HTTP (?:502|503|504)\)/.test(job.error||'');
+    const incomplete=/^Gemini (?:output limit reached \(8000 tokens\)|response incomplete \((?:OTHER|UNKNOWN|UNSPECIFIED)\))$/.test(job.error||'');
+    if((!httpOutage && !incomplete) || previous>=(incomplete?1:4))continue;
     const original=new Date(match[1]+':00:00+04:00').getTime();
     const backoff=[90000,180000,300000,900000][previous];
     if(!Number.isFinite(original)||time-original>12*3600000 ||

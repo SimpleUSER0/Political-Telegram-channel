@@ -75,12 +75,38 @@ test('Google request errors identify malformed fields without exposing credentia
     assert.ok(!error.message.includes(c.env.GEMINI_API_KEY));assert.ok(!error.message.includes('https://'));return true;
   });}finally{globalThis.fetch=original;}
 });
-test('Gemini safety refusal and token truncation cannot yield a draft',async()=>{
-  const {c,store}=await setup(),original=globalThis.fetch;
-  try{for(const finishReason of ['SAFETY','MAX_TOKENS']){
-    globalThis.fetch=async()=>Response.json({candidates:[{finishReason,content:{parts:[{text:'{"passed":true}'}]}}]});
-    await assert.rejects(llm(c,store,'Check',{},resultSchema),/incomplete or refused/);
-  }}finally{globalThis.fetch=original;}
+test('Gemini output truncation gets one metered larger-cap retry and then validates',async()=>{
+  const {e,store}=await fixture(),c=config({...e,AI_PROVIDER:'gemini',GEMINI_API_KEY:'offline-only',MAX_OUTPUT_TOKENS:'6000'});
+  const original=globalThis.fetch,limits=[];let call=0;
+  globalThis.fetch=async(_url,options)=>{
+    limits.push(JSON.parse(options.body).generationConfig.maxOutputTokens);
+    call++;
+    return Response.json({candidates:[{finishReason:call===1?'MAX_TOKENS':'STOP',
+      content:{parts:[{text:'{"passed":true}'}]}}],usageMetadata:{promptTokenCount:3,candidatesTokenCount:2}});
+  };
+  try{
+    assert.deepEqual(await llm(c,store,'Check',{},resultSchema),{passed:true});
+    assert.deepEqual(limits,[6000,8000]);
+    assert.equal((await store.status()).usage.calls,2);
+  }finally{globalThis.fetch=original;}
+});
+test('Gemini safety refusals are reported clearly and never retried',async()=>{
+  const {c,store}=await setup(),original=globalThis.fetch;let calls=0;
+  globalThis.fetch=async()=>{calls++;return Response.json({promptFeedback:{blockReason:'SAFETY'},
+    candidates:[{finishReason:'SAFETY',content:{parts:[]}}]});};
+  try{
+    await assert.rejects(llm(c,store,'Check',{},resultSchema),/Gemini safety refusal/);
+    assert.equal(calls,1);
+  }finally{globalThis.fetch=original;}
+});
+test('Gemini output still cut off at the hard cap gets a precise bounded error',async()=>{
+  const {e,store}=await fixture(),c=config({...e,AI_PROVIDER:'gemini',GEMINI_API_KEY:'offline-only',MAX_OUTPUT_TOKENS:'6000'});
+  const original=globalThis.fetch;let calls=0;
+  globalThis.fetch=async()=>{calls++;return Response.json({candidates:[{finishReason:'MAX_TOKENS',content:{parts:[]}}]});};
+  try{
+    await assert.rejects(llm(c,store,'Check',{},resultSchema),/output limit reached \(8000 tokens\)/);
+    assert.equal(calls,2);
+  }finally{globalThis.fetch=original;}
 });
 test('memory-only output cannot masquerade as web research',async()=>{
   const {c,store}=await setup(),original=globalThis.fetch;

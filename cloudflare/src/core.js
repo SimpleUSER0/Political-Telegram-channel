@@ -54,7 +54,7 @@ export function config(env) {
       provider==='workers-ai'?'@cf/qwen/qwen3-30b-a3b-fp8':(env.OPENAI_MODEL || ''),
     dailyRuns: number(env.MAX_DAILY_RUNS, provider==='gemini'?1:4, 1, 24),
     dailyCalls: number(env.MAX_DAILY_CALLS, provider==='gemini'?12:40, 1, 200),
-    maxTokens: number(env.MAX_OUTPUT_TOKENS, 4000, 512, 8000),
+    maxTokens: number(env.MAX_OUTPUT_TOKENS, 6000, 512, 8000),
     age: number(env.MAX_SOURCE_AGE_HOURS, 48, 1, 168) * 3600000,
     ttl: number(env.DRAFT_TTL_HOURS, 12, 1, 48) * 3600000,
   };

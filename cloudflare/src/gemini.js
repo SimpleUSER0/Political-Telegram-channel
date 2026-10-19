@@ -67,11 +67,11 @@ export async function geminiCall(c,store,day,instruction,data,schema,search) {
   if (schema) body.generationConfig.responseFormat={text:{mimeType:'APPLICATION_JSON',schema}};
   // Separate search and JSON calls work with Gemini 2.5; no search+schema combination.
   if (search) body.tools=[{google_search:{}}];
-  const send=model=>fetch(geminiEndpoint(c,model),{
+  const send=(model,maxOutputTokens=c.maxTokens)=>fetch(geminiEndpoint(c,model),{
     method:'POST',headers:{'x-goog-api-key':c.env.GEMINI_API_KEY,'Content-Type':'application/json'},
-    body:JSON.stringify(body),signal:AbortSignal.timeout(110000),
+    body:JSON.stringify({...body,generationConfig:{...body.generationConfig,maxOutputTokens}}),signal:AbortSignal.timeout(110000),
   });
-  let response=await send(c.model);
+  let model=c.model,response=await send(model);
   // Gemini Flash and Flash-Lite have separate model quotas. If primary Flash
   // is exhausted or temporarily unavailable (429/503), retry ONCE on Google's
   // free Lite model; never paid tiers,
@@ -79,29 +79,46 @@ export async function geminiCall(c,store,day,instruction,data,schema,search) {
   if([429,503].includes(response.status) && c.model==='gemini-3.8-flash' && !search) {
     await response.body?.cancel();
     await store.reserve('calls',Number.isInteger(c.callLimit)?c.callLimit:c.dailyCalls);
-    response=await send('gemini-3.5-flash-lite');
+    model='gemini-3.5-flash-lite';response=await send(model);
   }
-  const raw=await readText(response,1000000);
-  if (response.status===429) throw new Halt('Gemini free-tier quota reached (429); no paid-provider fallback');
-  if (!response.ok) {
-    let detail='';
-    try {
-      const error=JSON.parse(raw).error;
-      const status=/^[A-Z_]{1,50}$/.test(error?.status)?error.status:'';
-      const message=String(error?.message || '').replaceAll(c.env.GEMINI_API_KEY,'[redacted]')
-        .replace(/AIza[A-Za-z0-9_-]{10,}/g,'[redacted]').replace(/https?:\/\/\S+/g,'[url]').slice(0,160);
-      detail=[status,message].filter(Boolean).join(': ');
-    }catch{}
-    throw new Halt('Gemini request failed (HTTP '+response.status+')'+(detail?': '+detail:''));
+  const readPacket=async response=>{
+    const raw=await readText(response,1000000);
+    if(response.status===429)throw new Halt('Gemini free-tier quota reached (429); no paid-provider fallback');
+    if(!response.ok){
+      let detail='';
+      try{
+        const error=JSON.parse(raw).error;
+        const status=/^[A-Z_]{1,50}$/.test(error?.status)?error.status:'';
+        const message=String(error?.message || '').replaceAll(c.env.GEMINI_API_KEY,'[redacted]')
+          .replace(/AIza[A-Za-z0-9_-]{10,}/g,'[redacted]').replace(/https?:\/\/\S+/g,'[url]').slice(0,160);
+        detail=[status,message].filter(Boolean).join(': ');
+      }catch{}
+      throw new Halt('Gemini request failed (HTTP '+response.status+')'+(detail?': '+detail:''));
+    }
+    let value;
+    try{value=JSON.parse(raw);}catch{throw new Halt('Invalid Gemini response');}
+    const grounding=value.candidates?.[0]?.groundingMetadata;
+    await store.usage(day,{input_tokens:value.usageMetadata?.promptTokenCount || 0,
+      output_tokens:(value.usageMetadata?.candidatesTokenCount || 0)+(value.usageMetadata?.thoughtsTokenCount || 0)},
+      grounding?.webSearchQueries?.length || 0);
+    return value;
+  };
+  let packet=await readPacket(response),candidate=packet.candidates?.[0];
+  // Structured Georgian drafts and verification packets can exceed Gemini's
+  // initial output cap. Retry once with a larger bounded cap; account for the
+  // extra API call before sending it. Never retry policy/safety refusals.
+  if(!packet.promptFeedback?.blockReason && candidate?.finishReason==='MAX_TOKENS' && c.maxTokens<8000){
+    await store.reserve('calls',Number.isInteger(c.callLimit)?c.callLimit:c.dailyCalls);
+    packet=await readPacket(await send(model,8000));
+    candidate=packet.candidates?.[0];
   }
-  let packet;
-  try {packet=JSON.parse(raw);} catch {throw new Halt('Invalid Gemini response');}
-  const candidate=packet.candidates?.[0], meta=candidate?.groundingMetadata;
-  await store.usage(day,{input_tokens:packet.usageMetadata?.promptTokenCount || 0,
-    output_tokens:(packet.usageMetadata?.candidatesTokenCount || 0)+(packet.usageMetadata?.thoughtsTokenCount || 0)},
-    meta?.webSearchQueries?.length || 0);
-  if (packet.promptFeedback?.blockReason || candidate?.finishReason!=='STOP')
-    throw new Halt('Gemini response incomplete or refused');
+  if(packet.promptFeedback?.blockReason)
+    throw new Halt('Gemini safety refusal ('+String(packet.promptFeedback.blockReason).slice(0,40)+')');
+  if(candidate?.finishReason!=='STOP'){
+    const reason=/^[A-Z_]{1,40}$/.test(candidate?.finishReason||'')?candidate.finishReason:'UNKNOWN';
+    throw new Halt(reason==='MAX_TOKENS'?'Gemini output limit reached (8000 tokens)':`Gemini response incomplete (${reason})`);
+  }
+  const meta=candidate.groundingMetadata;
   const text=(candidate.content?.parts || []).filter(p=>typeof p.text==='string' && !p.thought)
     .map(p=>p.text).join('\n');
   if (!text.trim()) throw new Halt('Gemini returned no text');
