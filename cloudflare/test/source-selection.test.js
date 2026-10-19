@@ -1,5 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {Halt} from '../src/core.js';
+import {isEditorialCandidateFailure} from '../src/research.js';
 import {publisherGroup,publisherCandidates,rankedCandidates,selectDiscoveredSources,publisherImage} from '../src/research.js';
 
 const catalog=[
@@ -7,6 +9,11 @@ const catalog=[
   'https://www.theguardian.com/world/2026/oct/17/meeting/',
   'https://civil.ge/archives/123456',
 ];
+test('scheduled length misses reject a candidate while provider safety and quota failures abort',()=>{
+  assert.equal(isEditorialCandidateFailure(new Halt('Scheduled draft length outside 90-115 words')),true);
+  assert.equal(isEditorialCandidateFailure(new Halt('Gemini safety refusal (SAFETY)')),false);
+  assert.equal(isEditorialCandidateFailure(new Halt('Gemini free-tier quota reached (429); no paid-provider fallback')),false);
+});
 test('catalog IDs preserve publisher URLs and tracking without model URL reconstruction',()=>{
   assert.deepEqual(selectDiscoveredSources([1,0,1],catalog),[catalog[1],catalog[0]]);
 });

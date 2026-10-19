@@ -77,6 +77,10 @@ export function attributePublisherClaims(packet) {
 
 const articleSchema = object({title:s,body:s,claim_ids:array(integer),source_ids:array(integer)});
 const checkSchema = object({passed:bool,unsupported_claims:array(s),missing_attributions:array(s)});
+const EDITORIAL_CANDIDATE_FAILURE=/^(Duplicate underlying event|Conflicting evidence|Insufficient evidence|Incomplete source assessment|Unknown or stale source publication date|Source publication date conflicts|Source origin mapping conflict|Invalid claim|Evidence quote not in retrieved source|Inconsistent evidence origins|Independent corroboration missing|Attribution missing|Unknown source excerpt ID|Invalid article|Missing evidence source link|Unknown article claim|Unknown article source|Draft exceeds the photo caption limit|Source contains no citable excerpts|Scheduled draft length outside|ქართული ტექსტის ხარისხის შემოწმება ვერ გაიარა)/;
+export function isEditorialCandidateFailure(error) {
+  return error instanceof Halt && EDITORIAL_CANDIDATE_FAILURE.test(error.message);
+}
 
 export async function llm(c, store, instruction, data, schema = null, search = false) {
   const problems = missing(c, true);
@@ -642,8 +646,7 @@ units. Preserve every existing claim_id and source_id exactly. Output only the J
     } catch(error) {
       // Try the next article on editorial evidence failures, not on provider outages,
       // quota exhaustion or unexpected runtime failures. No unbounded AI retries.
-      const editorial=error instanceof Halt && /^(Duplicate underlying event|Conflicting evidence|Insufficient evidence|Incomplete source assessment|Unknown or stale source publication date|Source publication date conflicts|Source origin mapping conflict|Invalid claim|Evidence quote not in retrieved source|Inconsistent evidence origins|Independent corroboration missing|Attribution missing|Unknown source excerpt ID|Invalid article|Missing evidence source link|Unknown article claim|Unknown article source|Draft exceeds the photo caption limit|Source contains no citable excerpts|ქართული ტექსტის ხარისხის შემოწმება ვერ გაიარა)/.test(error.message);
-      if(!editorial)throw error;
+      if(!isEditorialCandidateFailure(error))throw error;
       attempt.rejected=error.message;
       lastEditorialError=error.message;
       stage='source-fetch';
