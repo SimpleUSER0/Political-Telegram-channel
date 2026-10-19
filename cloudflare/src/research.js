@@ -36,6 +36,7 @@ const s = {type:'string'}, integer = {type:'integer'}, bool = {type:'boolean'};
 const array = items => ({type:'array', items});
 const object = properties => ({type:'object', properties, required:Object.keys(properties), additionalProperties:false});
 const candidateSchema = object({event_key:s, topic:s, event_at:s, source_ids:array(integer)});
+const topicRelevanceSchema=object({relevant:bool,scope_appropriate:bool,reason:s});
 const verificationSchema = object({
   publishable:bool, duplicate_event:bool, reason:s, contradictions:array(s),
   sources:array(object({source_id:integer, published_at:{type:['string','null']}, origin_group:s,
@@ -271,8 +272,44 @@ export function publisherGroup(url,c) {
     .sort((a,b)=>b.length-a.length)[0] || host.replace(/^www\./,'');
 }
 
+const COVERAGE_STOPWORDS=new Set('a an and are as at be by for from in into is it of on or the to with over after amid says say calls called amid near new latest'.split(' '));
+const COVERAGE_ALIASES={
+  israeli:'israel',israelis:'israel',settlers:'settler',attacks:'attack',attacked:'attack',attacking:'attack',
+  arrests:'arrest',arrested:'arrest',arresting:'arrest',diplomats:'diplomat',journalists:'journalist',
+  photojournalist:'journalist',photojournalists:'journalist',assaults:'assault',assaulted:'assault',
+  clashes:'clash',clashed:'clash',killed:'kill',kills:'kill',wounded:'wound',wounds:'wound',
+};
+function coverageTokens(value) {
+  return new Set(String(value||'').toLowerCase().replace(/[^a-z0-9\s-]/g,' ')
+    .replaceAll('-',' ').split(/\s+/).filter(x=>x.length>2&&!COVERAGE_STOPWORDS.has(x))
+    .map(x=>COVERAGE_ALIASES[x]||x));
+}
+// Detect a repeated incident even when the index returns a new URL, date or
+// headline wording. Five shared substantive tokens plus a high Jaccard match
+// is intentionally conservative; a shared region alone is never enough.
+export function similarRecentCoverage(title,history=[]) {
+  const current=coverageTokens(title);
+  if(current.size<5)return false;
+  return history.some(item=>{
+    const prior=coverageTokens(item.topic);
+    if(prior.size<5)return false;
+    let shared=0;for(const token of current)if(prior.has(token))shared++;
+    const union=current.size+prior.size-shared;
+    return shared>=5 && shared/Math.max(1,union)>=0.38;
+  });
+}
+export function isBroadRegionalRequest(query) {
+  return /(?:ახლო\s*[- ]?აღმოსავლეთ|შუა\s*აღმოსავლეთ|middle\s*[- ]?east)/iu.test(String(query||''));
+}
+export function topicRelevanceFailure(query,verdict) {
+  if(!verdict?.relevant)return 'Source is not centrally about requested topic';
+  if(isBroadRegionalRequest(query) && verdict.scope_appropriate!==true)
+    return 'Source is too narrow for the requested regional scope';
+  return null;
+}
+
 export function rankedCandidates(candidates,catalog,c,history,time=now()) {
-  if(!Array.isArray(candidates) || candidates.length>3)throw new Halt('Invalid candidate list');
+  if(!Array.isArray(candidates) || candidates.length>10)throw new Halt('Invalid candidate list');
   const result=[];
   for(const {source_ids,...event} of candidates) {
     try {
@@ -283,7 +320,8 @@ export function rankedCandidates(candidates,catalog,c,history,time=now()) {
       event.event_key=normalized(event.event_key);
       // A substantively NEW decision or development on the same subject is allowed;
       // reusing the identical underlying event remains blocked.
-      if(history.some(h=>normalized(h.event_key)===event.event_key))continue;
+      if(history.some(h=>normalized(h.event_key)===event.event_key) ||
+         similarRecentCoverage(event.topic,history))continue;
       if(!result.some(r=>r.event_key===event.event_key))result.push({...event,source_urls});
     }catch(error){if(!(error instanceof Halt))throw error;}
   }
@@ -310,6 +348,7 @@ export function publisherCandidates(entries,history=[],max=3,edition='night',sch
   const georgiaInWindow=recent.filter(h=>newsroomBeat({title:h.topic,url:h.url})==='georgia').length;
   const allowGeorgia=!scheduled || (!georgiaToday && georgiaInWindow<2);
   const eligible=entries.filter(e=>e.url && e.title && Number.isFinite(Date.parse(e.published_at)) &&
+    !similarRecentCoverage(e.title,history) &&
     (allowGeorgia || newsroomBeat(e)!=='georgia'));
   return rankEditorialEntries(eligible,edition,scheduled?scheduledHistory:history)
     .map(e=>({event_key:'rss_'+hash(e.url)+'_'+new Date(e.published_at).toISOString().slice(0,10),
@@ -416,6 +455,7 @@ export async function generate(c,store,query,format,edition='night',preferredUrl
   // When the owner supplies any topic, Gemini searches real publisher articles
   // instead of relying on a predefined country list or the world RSS catalog.
   const modelConfig=manual?{...c,manualTopic:true}:c;
+  const broadRegional=isBroadRegionalRequest(query);
   // Reserve the run only when the remaining daily call budget can cover an
   // entire three/four-call workflow; avoid a predictable partial paid run.
   const requiredCalls=usingFeeds?2:directSearch?4:4;
@@ -474,10 +514,10 @@ Never substitute another subject or invent a source URL.`,
   if(!scopedEntries.length)throw new Halt('Requested breaking article is not in the current trusted publisher feed');
   const editorialCatalog=scopedEntries.map((entry,source_id)=>({...entry,source_id}));
   stage='candidate';
-  const topicMatches=directSearch?rankRequestedArticles(editorialCatalog,searchTerms,3):[];
+  const topicMatches=directSearch?rankRequestedArticles(editorialCatalog,searchTerms,20):[];
   if(directSearch && !topicMatches.length)
     throw new Halt('მოთხოვნილ თემაზე შესაბამისი სტატია ვერ მოიძებნა. სხვა თემით არ ჩავანაცვლებ.');
-  const discovery = (usingFeeds||directSearch)?{candidates:publisherCandidates(directSearch?topicMatches:editorialCatalog,history,3,edition,scheduled)}:
+  const discovery = (usingFeeds||directSearch)?{candidates:publisherCandidates(directSearch?topicMatches:editorialCatalog,history,directSearch?10:3,edition,scheduled)}:
     await llm(budgetedModelConfig,store,`Select up to THREE credible, dated publisher stories CENTRAL to the owner's EXACT topic. For daily scheduled briefings select important political/geopolitical events.
 Follow the owner's /news or /post topic strictly when specific; for a broad daily-news query prefer
 elections, legislation, governments, diplomacy, security, wars, sanctions, protests and major
@@ -554,12 +594,16 @@ Return [] only if no recent relevant article exists in the catalog.`,
 CENTRALLY about the user's specific request, NOT simply mentioning one keyword in passing.
 Do not approve unrelated news from a different country or subject, even if political.
 If the request is 'Japan' and the article is about US-Russia sanctions, reject.
+Also decide whether its SCALE matches the requested scope. The request is
+${broadRegional?'a broad Middle East regional overview: reject a one-off local police, court, arrest or isolated attack story unless it has clear material significance for a regional conflict, diplomacy, government policy or security situation.':'not explicitly a broad regional overview; a directly requested specific event may be narrow.'}
+Set scope_appropriate=false when an article is too narrow for a broad regional overview.
 Answer based ONLY on the exact retrieved article, its title and excerpt. Be strict.`,
         {user_query:query,model_selected_title:candidate.topic,
           source_article_url:primary.url,source_excerpt:primary.text.slice(0,4200)},
-        object({relevant:bool,reason:s}));
-      if(!verdict.relevant){
-        attempt.rejected='Source is not centrally about requested topic';
+        topicRelevanceSchema);
+      const topicFailure=topicRelevanceFailure(query,verdict);
+      if(topicFailure){
+        attempt.rejected=topicFailure;
         lastEditorialError=attempt.rejected;
         continue;
       }

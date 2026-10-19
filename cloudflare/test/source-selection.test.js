@@ -2,7 +2,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {Halt} from '../src/core.js';
 import {isEditorialCandidateFailure} from '../src/research.js';
-import {publisherGroup,publisherCandidates,rankedCandidates,selectDiscoveredSources,publisherImage} from '../src/research.js';
+import {publisherGroup,publisherCandidates,rankedCandidates,selectDiscoveredSources,publisherImage,
+  similarRecentCoverage,isBroadRegionalRequest,topicRelevanceFailure} from '../src/research.js';
 
 const catalog=[
   'https://www.bbc.co.uk/news/articles/a?at_medium=RSS&at_campaign=rss',
@@ -49,7 +50,33 @@ test('one publisher is allowed but duplicates and invalid IDs still fail',()=>{
   assert.throws(()=>rankedCandidates([{...event,source_ids:[0,2]}],urls,c,
     [{event_key:event.event_key,topic:'An earlier title'}]),/No eligible new event/);
   assert.throws(()=>rankedCandidates([{...event,source_ids:[0,99]}],urls,c,[]),/No eligible new event/);
-  assert.throws(()=>rankedCandidates(Array(4).fill({...event,source_ids:[0,2]}),urls,c,[]),/Invalid candidate list/);
+  assert.throws(()=>rankedCandidates(Array(11).fill({...event,source_ids:[0,2]}),urls,c,[]),/Invalid candidate list/);
+});
+
+test('recent West Bank settler attack coverage blocks a rephrased follow-up from a new URL',()=>{
+ const history=[{event_key:'older-attack',topic:'US ambassador to Israel calls West Bank settler attack on American photojournalist terror',state:'pending'}];
+ const repeated='Israeli police arrest 10 over settler attacks on journalist and diplomats in West Bank';
+ const unrelated='Iran nuclear talks resume as regional security negotiations restart';
+ assert.equal(similarRecentCoverage(repeated,history),true);
+ assert.equal(similarRecentCoverage(unrelated,history),false);
+ const entries=[
+  {url:'https://www.bbc.com/news/old-story',title:repeated,published_at:'2026-10-19T10:00:00Z',source_id:0},
+  {url:'https://www.dw.com/news/iran-talks',title:unrelated,published_at:'2026-10-19T09:00:00Z',source_id:1},
+ ];
+ const picked=publisherCandidates(entries,history,10,'night',false);
+ assert.deepEqual(picked.map(item=>item.topic),[unrelated]);
+ assert.throws(()=>rankedCandidates([{event_key:'new-url-new-day',topic:repeated,
+   event_at:'2026-10-19T10:00:00Z',source_ids:[0]}],[entries[0].url],
+   {age:7*86400000,domains:['bbc.com'],origins:{}},history),/No eligible new event/);
+});
+
+test('regional scope detector distinguishes broad Middle East requests from a specific incident',()=>{
+ const broad='ახლო აღმოსავლეთის მიმდინარე პოლიტიკური და უსაფრთხოების ვითარება';
+ assert.equal(isBroadRegionalRequest(broad),true);
+ assert.equal(isBroadRegionalRequest('West Bank settler attack on a journalist'),false);
+ assert.match(topicRelevanceFailure(broad,{relevant:true,scope_appropriate:false}),/too narrow/);
+ assert.equal(topicRelevanceFailure(broad,{relevant:true,scope_appropriate:true}),null);
+ assert.equal(topicRelevanceFailure('West Bank arrests',{relevant:true,scope_appropriate:false}),null);
 });
 
 test('RSS candidates use only genuine publisher title, date and source ID',()=>{
