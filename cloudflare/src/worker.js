@@ -204,8 +204,11 @@ export function authorizedUpdate(update,c) {
 export function isConversation(text) {
   const s=String(text||'').trim();
   if(!s || s.startsWith('/'))return false;
-  // Explicit post/article instructions take precedence even when phrased as a question.
-  if(/(?:პოსტი|პოსტის|სტატია|სტატიის|დაპოსტ|გამოსაქვეყნებ|მოამზადე|დამიწერე)/iu.test(s))return false;
+  // Content-creation requests take precedence even when phrased as questions or
+  // written with a Georgian typo/inflection (e.g. "შექმენი პოსტო ...?").
+  // Otherwise the question-mark shortcut sends them to chat, where Gemini asks
+  // the owner to supply sources instead of running the newsroom search.
+  if(/(?:პოსტ\p{L}{0,6}|სტატი\p{L}{0,8}|დაპოსტ\p{L}{0,7}|გამოსაქვეყნ\p{L}{0,10}|მოამზადე|მომიმზადე|დამიწერე|დაწერე|შექმენი|შექმნე|დამიგენერირე)/iu.test(s))return false;
   return /[?？]$/.test(s) || /^(?:რა |რას |როდის |სად |როგორ |რატომ |ვინ |ვის |რომელი |რამდენი |შეიძლება |შეგიძლია |მითხარი |ამიხსენი |გამარჯობა|ჰეი\b)/iu.test(s);
 }
 async function conversation(c,store,question) {

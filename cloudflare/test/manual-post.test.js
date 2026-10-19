@@ -1,8 +1,16 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {manualPostRequest,handleFetch} from '../src/worker.js';
+import {manualPostRequest,handleFetch,isConversation} from '../src/worker.js';
 import {env,fixture,mockTelegram} from './helpers.js';
 
+test('a question-mark post request with a Georgian typo is routed to research, not chat',()=>{
+  const text='შექმენი პოსტო ახლო აღმოსავლეთზე?';
+  assert.equal(isConversation(text),false);
+  assert.equal(manualPostRequest(text).format,'STANDARD');
+  assert.match(manualPostRequest(text).query,/ახლო აღმოსავლეთზე/);
+  for(const variant of ['მოამზადე პოსტი ახლო აღმოსავლეთზე?', 'დამიწერე სტატია ირანზე?'])
+    assert.equal(isConversation(variant),false);
+});
 test('owner can send plain Georgian text instead of slash command',()=>{
   const a=manualPostRequest('დამიწერე პოსტი ჩინეთისა და ტაივანის ურთიერთობებზე');
   assert.equal(a.query,'დამიწერე პოსტი ჩინეთისა და ტაივანის ურთიერთობებზე');

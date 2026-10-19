@@ -66,6 +66,7 @@ test('/ask speaks with Gemini directly and never queues or publishes a post',asy
     assert.equal(res.status,200);
     await Promise.all(tasks);
     assert.ok(sent.some(x=>x.text.includes('იაპონიის საკანონმდებლო')));
+    assert.ok(sent.every(x=>!x.text.includes('Allowed publisher URLs:')));
     assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE kind='research'").first()).n,0);
     assert.equal((await store.stmt('SELECT count(*) AS n FROM cf_drafts').first()).n,0);
   } finally{globalThis.fetch=original;}

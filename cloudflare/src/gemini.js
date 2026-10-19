@@ -140,5 +140,5 @@ export async function geminiCall(c,store,day,instruction,data,schema,search) {
   // Normalize the transport only; every downstream evidence/attribution check remains intact.
   return {status:'completed',provider:'gemini',grounding:meta || null,
     output:[...(search?[{type:'web_search_call',action:{sources:[...urls].map(url=>({url}))}}]:[]),
-      {type:'message',content:[{type:'output_text',text:text+'\nAllowed publisher URLs: '+[...urls].join('\n')}]}]};
+      {type:'message',content:[{type:'output_text',text}]}]};
 }
