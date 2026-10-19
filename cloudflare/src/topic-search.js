@@ -8,7 +8,17 @@ export const MANUAL_PUBLISHER_DOMAINS=Object.freeze([
  'arstechnica.com','nature.com','science.org','sciencedaily.com',
  'nasa.gov','britannica.com','smithsonianmag.com','nationalgeographic.com',
  'who.int','un.org','phys.org','ign.com','espn.com',
- 'aljazeera.com','france24.com','dw.com',
+ // Broad international coverage lets an owner request a subject without first
+ // guessing which of a small, fixed set of outlets has reported it. Manual
+ // drafts still fetch publisher pages, verify publication dates and claims,
+ // and label single-source reporting; these domains are discovery boundaries,
+ // not an endorsement that every article is unbiased or independently proven.
+ 'aljazeera.com','france24.com','dw.com','bbc.com','bbc.co.uk','cnn.com',
+ 'nytimes.com','washingtonpost.com','theguardian.com','ft.com','npr.org',
+ 'cbsnews.com','cbc.ca','abc.net.au','abcnews.go.com','axios.com','politico.com',
+ 'foreignpolicy.com','timesofisrael.com','haaretz.com','jpost.com',
+ 'middleeasteye.net','thenationalnews.com','gulfnews.com','arabnews.com',
+ 'alarabiya.net','iranintl.com','rferl.org','kyivindependent.com',
 ]);
 // Public GDELT DOC 2.0 indexes publisher URLs. It does not establish the article's
 // publication date or factual claims: these come from fetching the real publisher.

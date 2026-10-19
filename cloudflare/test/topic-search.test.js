@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {topicLookupUrl,parseTopicIndex,rankRequestedArticles,guardianTopicLookup,bingTopicLookup} from '../src/topic-search.js';
+import {topicLookupUrl,parseTopicIndex,rankRequestedArticles,guardianTopicLookup,bingTopicLookup,MANUAL_PUBLISHER_DOMAINS} from '../src/topic-search.js';
 
 test('News index search URL has fixed HTTPS origin and properly escaped arbitrary query',()=>{
  const url=new URL(topicLookupUrl('New Zealand elections and policy'));
@@ -29,6 +29,15 @@ test('Broad Middle East searches accept relevant regional reporting without matc
   {title:'Middle-class tax relief announced',url:'https://www.france24.com/news/3',published_at:'2026-10-19T12:00:00Z'},
  ];
  assert.deepEqual(rankRequestedArticles(docs,'Middle East current developments'),[docs[0]]);
+});
+
+test('Manual discovery allows broad international reporting while still rejecting arbitrary domains',()=>{
+ for(const domain of ['www.reuters.com','www.bbc.com','www.aljazeera.com','www.haaretz.com',
+   'www.middleeasteye.net','www.thenationalnews.com','www.dw.com'])
+  assert.equal(parseTopicIndex({articles:[{url:`https://${domain}/story/1`,title:'Report on regional talks',
+   seendate:'20261019T140000Z'}]},MANUAL_PUBLISHER_DOMAINS).length,1,domain);
+ assert.equal(parseTopicIndex({articles:[{url:'https://unverified-blog.example/story/1',
+   title:'Report on regional talks',seendate:'20261019T140000Z'}]},MANUAL_PUBLISHER_DOMAINS).length,0);
 });
 
 test('Topic candidates cannot fall back to unrelated politics to satisfy a post quota',()=>{
