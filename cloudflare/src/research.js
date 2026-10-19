@@ -111,7 +111,21 @@ export async function llm(c, store, instruction, data, schema = null, search = f
   const callLimit = Number.isInteger(c.callLimit) ? c.callLimit : nonScheduledCallLimit(c);
   const day = await store.reserve('calls', callLimit);
   const editorial=c.manualTopic?OWNER_EDITORIAL:EDITORIAL;
-  if (c.provider==='gemini') return geminiCall(c,store,day,editorial+'\n'+instruction,data,schema,search);
+  if (c.provider==='gemini') {
+    try {return await geminiCall(c,store,day,editorial+'\n'+instruction,data,schema,search);}
+    catch(error) {
+      // Google can reject a valid free-tier API call solely because Cloudflare's
+      // egress location is unsupported. Recover only that explicit condition,
+      // and only for non-search calls: Workers AI has no grounded web search.
+      // The daily call is already reserved and all schemas/evidence checks run
+      // unchanged on the fallback result. Quotas, refusals and other errors stop.
+      const locationBlocked=/^Gemini request failed \(HTTP 400\): FAILED_PRECONDITION: User location is not supported for the API use\./
+        .test(String(error?.message||''));
+      if(locationBlocked && !search && c.env.AI && typeof c.env.AI.run==='function')
+        return workersAICall(c,store,day,editorial+'\n'+instruction,data,schema,false);
+      throw error;
+    }
+  }
   if (c.provider==='workers-ai')return workersAICall(c,store,day,editorial+'\n'+instruction,data,schema,search);
   const body = {model:c.model,store:false,instructions:editorial+'\n'+instruction,
     input:JSON.stringify(data),max_output_tokens:c.maxTokens};

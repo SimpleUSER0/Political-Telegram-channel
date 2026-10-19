@@ -34,6 +34,28 @@ test('Cloudflare AI returns validated JSON and updates usage without Google netw
   const status=(await store.status()).usage;
   assert.equal(status.calls,1);assert.equal(status.input_tokens,120);assert.equal(status.output_tokens,35);
 });
+test('Gemini unsupported-location error uses bounded Workers AI fallback with the same schema',async()=>{
+  const {e,store}=await fixture(),original=globalThis.fetch;
+  let aiCalls=0;
+  e.GEMINI_API_KEY='offline-gemini';e.AI_PROVIDER='gemini';e.GEMINI_MODEL='gemini-3.8-flash';
+  e.AI={run:async(model,payload)=>{
+    aiCalls++;assert.equal(model,'@cf/qwen/qwen3-30b-a3b-fp8');
+    assert.equal(payload.response_format.type,'json_object');
+    return {choices:[{message:{content:'{"title":"შუა აღმოსავლეთში მოლაპარაკებები განახლდა","accepted":true}'},
+      finish_reason:'stop'}],usage:{prompt_tokens:100,completion_tokens:24}};
+  }};
+  globalThis.fetch=async()=>Response.json({error:{status:'FAILED_PRECONDITION',
+    message:'User location is not supported for the API use.'}},{status:400});
+  try {
+    const c=config(e);
+    assert.deepEqual(await llm(c,store,'Write a verified Georgian draft',{},schema),{
+      title:'შუა აღმოსავლეთში მოლაპარაკებები განახლდა',accepted:true,
+    });
+    assert.equal(aiCalls,1);
+    const usage=(await store.status()).usage;
+    assert.equal(usage.calls,1);assert.equal(usage.input_tokens,100);assert.equal(usage.output_tokens,24);
+  } finally {globalThis.fetch=original;}
+});
 test('Cloudflare AI schema mismatch or truncated output cannot become draft',async()=>{
   const {e,store}=await fixture();
   e.AI={run:async()=>({choices:[{message:{content:'{"accepted":"true"}'},finish_reason:'stop'}]})};
