@@ -56,6 +56,21 @@ test('Gemini unsupported-location error uses bounded Workers AI fallback with th
     assert.equal(usage.calls,1);assert.equal(usage.input_tokens,100);assert.equal(usage.output_tokens,24);
   } finally {globalThis.fetch=original;}
 });
+test('Gemini transport failures fall back to Workers AI only for non-search calls',async()=>{
+  const {e,store}=await fixture(),original=globalThis.fetch;let aiCalls=0;
+  e.GEMINI_API_KEY='offline-gemini';e.AI_PROVIDER='gemini';e.GEMINI_MODEL='gemini-3.8-flash';
+  e.AI={run:async()=>{aiCalls++;return {choices:[{message:{content:'{"title":"მოლაპარაკებები განახლდა","accepted":true}'},finish_reason:'stop'}]};}};
+  globalThis.fetch=async()=>{throw new TypeError('secret transport details');};
+  try {
+    const c=config(e);
+    assert.deepEqual(await llm(c,store,'Write a verified Georgian draft',{},schema),{
+      title:'მოლაპარაკებები განახლდა',accepted:true,
+    });
+    await assert.rejects(llm(c,store,'Search the web',{},null,true),/Gemini network request failed/);
+    assert.equal(aiCalls,1);
+    assert.equal((await store.status()).usage.calls,2);
+  } finally {globalThis.fetch=original;}
+});
 test('Cloudflare AI schema mismatch or truncated output cannot become draft',async()=>{
   const {e,store}=await fixture();
   e.AI={run:async()=>({choices:[{message:{content:'{"accepted":"true"}'},finish_reason:'stop'}]})};
