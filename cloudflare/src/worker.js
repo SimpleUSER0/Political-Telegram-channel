@@ -562,7 +562,7 @@ export async function retryScheduledFailures(c,store,time) {
     const previous=Number(match[2]||0);
     const httpOutage=/Gemini request failed \(HTTP (?:502|503|504)\)/.test(job.error||'');
     const incomplete=/^Gemini (?:output limit reached \(8000 tokens\)|response incomplete \((?:OTHER|UNKNOWN|UNSPECIFIED)\))$/.test(job.error||'');
-    const transportFailure=/^Gemini (?:network request failed|response transport interrupted)$/.test(job.error||'');
+    const transportFailure=/^(?:Gemini (?:network request failed|response transport interrupted)|Research execution failed at draft \(Error\); no automatic retry)$/.test(job.error||'');
     // A scheduled post can exhaust its two evidence-preserving length edits
     // even when the story itself is sound. Give the slot one whole-run retry
     // so it can select another candidate or get a fresh bounded resize. This
