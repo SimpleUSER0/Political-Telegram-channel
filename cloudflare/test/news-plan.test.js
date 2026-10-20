@@ -238,6 +238,22 @@ test('draft transport interruptions get at most two bounded retries after a leng
   assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE 'schedule-2026-10-18T13%' ").first()).n,3);
 });
 
+test('a truncated Workers AI fallback gets one final bounded scheduled retry',async()=>{
+  const {c,store}=await fixture(),active={...c,schedule:true},start=Date.UTC(2026,9,18,14,0);
+  const id='schedule-2026-10-18T18-retry-3',payload={query:'world politics',format:'STANDARD',edition:'evening'};
+  await store.enqueue('research',payload,id);
+  await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
+    'Cloudflare Workers AI response was truncated',start+60000,id).run();
+  await retryScheduledFailures(active,store,start+3*60000);
+  const last=await store.stmt("SELECT id,status,payload FROM cf_jobs WHERE id=?",id.replace('-retry-3','-retry-4')).first();
+  assert.equal(last.status,'queued');
+  assert.deepEqual(JSON.parse(last.payload),payload);
+  await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
+    'Cloudflare Workers AI response was truncated',start+4*60000,last.id).run();
+  await retryScheduledFailures(active,store,start+8*60000);
+  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE 'schedule-2026-10-18T18%' ").first()).n,2);
+});
+
 test('Clock-time scheduled jobs are claimed before older manual research backlog',async()=>{
   const {store}=await fixture();
   await store.enqueue('research',{query:'manual',format:'STANDARD'},'manual-research-1');
