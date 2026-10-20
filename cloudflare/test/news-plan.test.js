@@ -195,6 +195,27 @@ test('one incomplete scheduled Gemini response is retried once, while a second f
   assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE ?",id+'%').first()).n,2);
 });
 
+test('a scheduled length miss gets one bounded full-run retry, then stops',async()=>{
+  const {c,store}=await fixture(),active={...c,schedule:true},start=Date.UTC(2026,9,18,9,0); // 13:00 Tbilisi
+  const id='schedule-2026-10-18T13';
+  const payload={query:'world politics',format:'STANDARD',edition:'midday'};
+  await store.enqueue('research',payload,id);
+  await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
+    'No supported photo-backed political story for the requested topic: Scheduled draft length outside 80-100 words',
+    start+60000,id).run();
+  await retryScheduledFailures(active,store,start+2*60000); // bounded backoff not elapsed
+  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE ?",id+'%').first()).n,1);
+  await retryScheduledFailures(active,store,start+4*60000);
+  const retry=await store.stmt("SELECT id,status,payload FROM cf_jobs WHERE id=?",id+'-retry-1').first();
+  assert.equal(retry.status,'queued');
+  assert.deepEqual(JSON.parse(retry.payload),payload);
+  await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
+    'No supported photo-backed political story for the requested topic: Scheduled draft length outside 80-100 words',
+    start+5*60000,id+'-retry-1').run();
+  await retryScheduledFailures(active,store,start+15*60000);
+  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE ?",id+'%').first()).n,2);
+});
+
 test('Clock-time scheduled jobs are claimed before older manual research backlog',async()=>{
   const {store}=await fixture();
   await store.enqueue('research',{query:'manual',format:'STANDARD'},'manual-research-1');
