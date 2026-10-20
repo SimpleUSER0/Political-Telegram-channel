@@ -216,7 +216,7 @@ test('a scheduled length miss gets one bounded full-run retry, then stops',async
   assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE ?",id+'%').first()).n,2);
 });
 
-test('a draft transport interruption gets one bounded recovery after the length retry',async()=>{
+test('draft transport interruptions get at most two bounded retries after a length retry',async()=>{
   const {c,store}=await fixture(),active={...c,schedule:true},start=Date.UTC(2026,9,18,9,0);
   const id='schedule-2026-10-18T13-retry-1';
   const payload={query:'world politics',format:'STANDARD',edition:'midday'};
@@ -229,8 +229,13 @@ test('a draft transport interruption gets one bounded recovery after the length 
   assert.deepEqual(JSON.parse(retry.payload),payload);
   await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
     'Gemini response transport interrupted',start+8*60000,id.replace('-retry-1','-retry-2')).run();
-  await retryScheduledFailures(active,store,start+12*60000);
-  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE 'schedule-2026-10-18T13%' ").first()).n,2);
+  await retryScheduledFailures(active,store,start+14*60000);
+  const lastId=id.replace('-retry-1','-retry-3');
+  assert.equal((await store.stmt("SELECT status FROM cf_jobs WHERE id=?",lastId).first()).status,'queued');
+  await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
+    'Gemini network request failed',start+15*60000,lastId).run();
+  await retryScheduledFailures(active,store,start+20*60000);
+  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE 'schedule-2026-10-18T13%' ").first()).n,3);
 });
 
 test('Clock-time scheduled jobs are claimed before older manual research backlog',async()=>{
