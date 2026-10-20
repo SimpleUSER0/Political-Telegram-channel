@@ -28,7 +28,7 @@ export async function workersAICall(c,store,day,instruction,data,schema,search) 
   const payload={
     messages:[{role:'system',content:instruction+guidance},
       {role:'user',content:'/no_think\n'+JSON.stringify(data)}],
-    max_tokens:Math.min(c.maxTokens,3200),temperature:0.1,
+    max_tokens:Math.min(c.maxTokens,6000),temperature:0.1,
     ...(schema?{response_format:{type:'json_object'}}:{}),
   };
   let raw;
