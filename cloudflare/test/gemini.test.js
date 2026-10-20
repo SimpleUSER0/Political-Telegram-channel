@@ -37,6 +37,15 @@ test('free-tier 429 stops after one attempt, with no OpenAI fallback',async()=>{
   try{await assert.rejects(llm(c,store,'Check',{},resultSchema),/quota reached/);assert.equal(calls,1);}
   finally{globalThis.fetch=original;}
 });
+test('Gemini transport failures are sanitized and marked for bounded scheduled recovery',async()=>{
+  const {c,store}=await setup(),original=globalThis.fetch;let calls=0;
+  globalThis.fetch=async()=>{calls++;throw new TypeError('sensitive network details');};
+  try{
+    await assert.rejects(llm(c,store,'Check',{},resultSchema),/Gemini network request failed/);
+    assert.equal(calls,1);
+    assert.equal((await store.status()).usage.calls,1);
+  }finally{globalThis.fetch=original;}
+});
 test('Gemini 3.8 free-tier 429 gets one metered Google Flash-Lite fallback without a paid provider',async()=>{
   const {store}=await fixture();
   const c=config({... (await setup()).c.env,AI_PROVIDER:'gemini',GEMINI_MODEL:'gemini-3.8-flash',
