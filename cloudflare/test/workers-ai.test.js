@@ -41,6 +41,7 @@ test('Gemini unsupported-location error uses bounded Workers AI fallback with th
   e.AI={run:async(model,payload)=>{
     aiCalls++;assert.equal(model,'@cf/qwen/qwen3-30b-a3b-fp8');
     assert.equal(payload.response_format.type,'json_object');
+    assert.equal(payload.max_tokens,6000);
     return {choices:[{message:{content:'{"title":"შუა აღმოსავლეთში მოლაპარაკებები განახლდა","accepted":true}'},
       finish_reason:'stop'}],usage:{prompt_tokens:100,completion_tokens:24}};
   }};
