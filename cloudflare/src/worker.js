@@ -562,9 +562,16 @@ export async function retryScheduledFailures(c,store,time) {
     const previous=Number(match[2]||0);
     const httpOutage=/Gemini request failed \(HTTP (?:502|503|504)\)/.test(job.error||'');
     const incomplete=/^Gemini (?:output limit reached \(8000 tokens\)|response incomplete \((?:OTHER|UNKNOWN|UNSPECIFIED)\))$/.test(job.error||'');
-    if((!httpOutage && !incomplete) || previous>=(incomplete?1:4))continue;
+    // A scheduled post can exhaust its two evidence-preserving length edits
+    // even when the story itself is sound. Give the slot one whole-run retry
+    // so it can select another candidate or get a fresh bounded resize. This
+    // is deliberately separate from the per-draft correction budget and is
+    // capped at one to protect the daily Gemini call limit.
+    const lengthMiss=/Scheduled draft length outside \d+-\d+ words/.test(job.error||'');
+    if((!httpOutage && !incomplete && !lengthMiss) ||
+       previous>=(lengthMiss?1:incomplete?1:4))continue;
     const original=new Date(match[1]+':00:00+04:00').getTime();
-    const backoff=[90000,180000,300000,900000][previous];
+    const backoff=lengthMiss?180000:[90000,180000,300000,900000][previous];
     if(!Number.isFinite(original)||time-original>12*3600000 ||
        time-original<90000 || time-Number(job.finished_at)<backoff)continue;
     const retryId='schedule-'+match[1]+'-retry-'+(previous+1);
