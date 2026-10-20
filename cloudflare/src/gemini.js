@@ -67,10 +67,13 @@ export async function geminiCall(c,store,day,instruction,data,schema,search) {
   if (schema) body.generationConfig.responseFormat={text:{mimeType:'APPLICATION_JSON',schema}};
   // Separate search and JSON calls work with Gemini 2.5; no search+schema combination.
   if (search) body.tools=[{google_search:{}}];
-  const send=(model,maxOutputTokens=c.maxTokens)=>fetch(geminiEndpoint(c,model),{
-    method:'POST',headers:{'x-goog-api-key':c.env.GEMINI_API_KEY,'Content-Type':'application/json'},
-    body:JSON.stringify({...body,generationConfig:{...body.generationConfig,maxOutputTokens}}),signal:AbortSignal.timeout(110000),
-  });
+  const send=async(model,maxOutputTokens=c.maxTokens)=>{
+    try{return await fetch(geminiEndpoint(c,model),{
+      method:'POST',headers:{'x-goog-api-key':c.env.GEMINI_API_KEY,'Content-Type':'application/json'},
+      body:JSON.stringify({...body,generationConfig:{...body.generationConfig,maxOutputTokens}}),signal:AbortSignal.timeout(110000),
+    });}
+    catch{throw new Halt('Gemini network request failed');}
+  };
   let model=c.model,response=await send(model);
   // Gemini Flash and Flash-Lite have separate model quotas. If primary Flash
   // is exhausted or temporarily unavailable (429/503), retry ONCE on Google's
@@ -82,7 +85,12 @@ export async function geminiCall(c,store,day,instruction,data,schema,search) {
     model='gemini-3.5-flash-lite';response=await send(model);
   }
   const readPacket=async response=>{
-    const raw=await readText(response,1000000);
+    let raw;
+    try{raw=await readText(response,1000000);}
+    catch(error){
+      if(error instanceof Halt)throw error;
+      throw new Halt('Gemini response transport interrupted');
+    }
     if(response.status===429)throw new Halt('Gemini free-tier quota reached (429); no paid-provider fallback');
     if(!response.ok){
       let detail='';
