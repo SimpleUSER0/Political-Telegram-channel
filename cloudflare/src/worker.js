@@ -570,7 +570,7 @@ export async function retryScheduledFailures(c,store,time) {
     // capped at one to protect the daily Gemini call limit.
     const lengthMiss=/Scheduled draft length outside \d+-\d+ words/.test(job.error||'');
     if((!httpOutage && !incomplete && !lengthMiss && !transportFailure) ||
-       previous>=(lengthMiss?1:incomplete?1:transportFailure?2:4))continue;
+       previous>=(lengthMiss?1:incomplete?1:transportFailure?3:4))continue;
     const original=new Date(match[1]+':00:00+04:00').getTime();
     const backoff=lengthMiss?180000:[90000,180000,300000,900000][previous];
     if(!Number.isFinite(original)||time-original>12*3600000 ||
