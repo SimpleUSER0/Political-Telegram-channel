@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {config} from '../src/core.js';
 import {env,fixture} from './helpers.js';
 import {schedule,scheduleBreaking,retryScheduledFailures,retryFailedDeliveries,recoverUndeliveredDrafts,drain} from '../src/worker.js';
-import {repairScheduledLength,draftLengthGuidance} from '../src/research.js';
+import {validateScheduledDraft,isEditorialCandidateFailure,draftLengthGuidance} from '../src/research.js';
 import {breakingCandidates,breakingEligible,editionAtHour,editionDetails,editionWordCount,meetsEditionWordTarget,localClock,
   newsroomBeat,rankEditorialEntries,REGULAR_HOURS} from '../src/news-plan.js';
 
@@ -30,31 +30,23 @@ test('scheduled post word targets match each agreed edition and count title plus
     assert.equal(meetsEditionWordTarget(long,edition),false);
   }
 });
-test('a scheduled edition gets at most two measured length corrections',async()=>{
+test('scheduled draft length is checked locally and a miss is rejected for the next story',()=>{
   const makeArticle=count=>({title:'სათაური',body:Array(count-1).fill('ამბავი').join(' '),claim_ids:[0],source_ids:[0]});
-  let calls=0;
-  const repaired=await repairScheduledLength(makeArticle(20),'evening',async(_article,{wordCount,attempt})=>{
-    calls++;assert.equal(attempt,calls-1);assert.equal(wordCount,calls===1?20:70);
-    return makeArticle(calls===1?70:100);
+  const valid=makeArticle(100);
+  assert.equal(validateScheduledDraft(valid,'evening'),valid);
+  const tooShort=makeArticle(20);
+  assert.throws(()=>validateScheduledDraft(tooShort,'evening'),error=>{
+    assert.match(error.message,/Scheduled draft length outside 90-115 words/);
+    assert.equal(isEditorialCandidateFailure(error),true);
+    return true;
   });
-  assert.equal(calls,2);
-  assert.equal(editionWordCount(repaired),100);
-  assert.equal(meetsEditionWordTarget(repaired,'evening'),true);
 });
-test('a scheduled edition still fails closed after the bounded second correction',async()=>{
-  const makeArticle=count=>({title:'სათაური',body:Array(count-1).fill('ამბავი').join(' '),claim_ids:[0],source_ids:[0]});
-  let calls=0;
-  await assert.rejects(repairScheduledLength(makeArticle(20),'evening',async()=>{
-    calls++;return makeArticle(70);
-  }),/Scheduled draft length outside 90-115 words/);
-  assert.equal(calls,2);
-});
-test('scheduled draft instructions make the agreed word range override general brevity advice',()=>{
+test('scheduled draft instructions specify one midpoint target',()=>{
   const scheduled=draftLengthGuidance('evening',true),manual=draftLengthGuidance('evening',false);
-  assert.match(scheduled,/90-115 whitespace-separated Georgian words/);
-  assert.match(scheduled,/does not apply to scheduled editions/);
+  assert.match(scheduled,/90-115 whitespace-separated words/);
+  assert.match(scheduled,/let the local length check move to another story/);
   assert.match(manual,/1-3 very short clear Georgian sentences/);
-  assert.doesNotMatch(scheduled,/Prefer 1-3 very short clear Georgian sentences/);
+  assert.doesNotMatch(scheduled,/1-3 very short clear Georgian sentences/);
 });
 test('One deterministic regular research job per slot with correct editorial edition',async()=>{
   const {c,store}=await fixture();
@@ -195,28 +187,17 @@ test('one incomplete scheduled Gemini response is retried once, while a second f
   assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE ?",id+'%').first()).n,2);
 });
 
-test('a scheduled length miss gets one bounded full-run retry, then stops',async()=>{
+test('scheduled editorial length misses do not launch another paid full run',async()=>{
   const {c,store}=await fixture(),active={...c,schedule:true},start=Date.UTC(2026,9,18,9,0); // 13:00 Tbilisi
   const id='schedule-2026-10-18T13';
-  const payload={query:'world politics',format:'STANDARD',edition:'midday'};
-  await store.enqueue('research',payload,id);
+  await store.enqueue('research',{query:'world politics',format:'STANDARD',edition:'midday'},id);
   await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
     'No supported photo-backed political story for the requested topic: Scheduled draft length outside 80-100 words',
     start+60000,id).run();
-  await retryScheduledFailures(active,store,start+2*60000); // bounded backoff not elapsed
-  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE ?",id+'%').first()).n,1);
   await retryScheduledFailures(active,store,start+4*60000);
-  const retry=await store.stmt("SELECT id,status,payload FROM cf_jobs WHERE id=?",id+'-retry-1').first();
-  assert.equal(retry.status,'queued');
-  assert.deepEqual(JSON.parse(retry.payload),payload);
-  await store.stmt("UPDATE cf_jobs SET status='failed',error=?,finished_at=? WHERE id=?",
-    'No supported photo-backed political story for the requested topic: Scheduled draft length outside 80-100 words',
-    start+5*60000,id+'-retry-1').run();
-  await retryScheduledFailures(active,store,start+15*60000);
-  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE ?",id+'%').first()).n,2);
+  assert.equal((await store.stmt("SELECT count(*) AS n FROM cf_jobs WHERE id LIKE ?",id+'%').first()).n,1);
 });
-
-test('draft transport interruptions get at most two bounded retries after a length retry',async()=>{
+test('draft transport interruptions get at most two bounded retries',async()=>{
   const {c,store}=await fixture(),active={...c,schedule:true},start=Date.UTC(2026,9,18,9,0);
   const id='schedule-2026-10-18T13-retry-1';
   const payload={query:'world politics',format:'STANDARD',edition:'midday'};
