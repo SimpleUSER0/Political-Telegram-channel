@@ -83,9 +83,20 @@ export function isEditorialCandidateFailure(error) {
   return error instanceof Halt && EDITORIAL_CANDIDATE_FAILURE.test(error.message);
 }
 
-// Scheduled drafts get one generation attempt per publisher story. A miss is
-// rejected locally so the scheduler moves to the next story without another paid
-// rewrite call; all original evidence, Georgian quality and caption checks remain.
+// At most one evidence-bound length correction per candidate. A persistent
+// miss moves to the next publisher story instead of restarting the whole job.
+export async function repairScheduledLengthOnce(article,edition,revise,normalize=value=>value) {
+  if(meetsEditionWordTarget(article,edition))return article;
+  const target=editionDetails(edition),wordCount=editionWordCount(article);
+  const revised=await revise(article,{target,wordCount});
+  if(JSON.stringify(revised.claim_ids)!==JSON.stringify(article.claim_ids) ||
+     JSON.stringify(revised.source_ids)!==JSON.stringify(article.source_ids))
+    throw new Halt('Scheduled length revision changed verified source or claim IDs');
+  const current=await normalize(revised);
+  if(!meetsEditionWordTarget(current,edition))
+    throw new Halt(`Scheduled draft length outside ${target.minWords}-${target.maxWords} words`);
+  return current;
+}
 export function validateScheduledDraft(article,edition) {
   if(!meetsEditionWordTarget(article,edition)) {
     const target=editionDetails(edition);
@@ -97,7 +108,7 @@ export function validateScheduledDraft(article,edition) {
 export function draftLengthGuidance(edition,scheduled) {
   if(!scheduled)return 'Prefer 1-3 very short clear Georgian sentences over 3 paragraphs of filler.';
   const target=editionDetails(edition);
-  return `SCHEDULED EDITION: title plus body MUST contain ${target.minWords}-${target.maxWords} whitespace-separated words. Aim for exactly ${Math.round((target.minWords+target.maxWords)/2)} words, in 2-3 concise paragraphs. Count Georgian words separated by spaces; punctuation stays attached to its word. Include only distinct facts supported by the evidence. If this source cannot support the target naturally, return a concise evidence-based draft and let the local length check move to another story. No filler or unsupported inference.`;
+  return `SCHEDULED EDITION: title plus body MUST contain ${target.minWords}-${target.maxWords} whitespace-separated words. Aim for ${Math.round((target.minWords+target.maxWords)/2)} words in 2-3 concise paragraphs. Count words separated by spaces; punctuation stays attached to its word. Include distinct facts supported by the evidence. One length-only correction is available if the first draft misses; never pad or add unsupported inference.`;
 }
 
 export async function llm(c, store, instruction, data, schema = null, search = false) {
@@ -688,6 +699,28 @@ Do not pad word counts. Output ONLY the required JSON object.`,
         grammarIssues=georgianQualityIssues(article);
       }
       requireGeorgianQuality(article);
+      if(scheduled && !meetsEditionWordTarget(article,edition)){
+        stage='scheduled-length-correction';
+        await store.requireCallCapacity(budgetedModelConfig.callLimit,1);
+        article=await repairScheduledLengthOnce(article,edition,async(current,{target,wordCount})=>{
+          const midpoint=Math.round((target.minWords+target.maxWords)/2);
+          return llm(budgetedModelConfig,store,`${GEORGIAN_STYLE_EXAMPLES}
+
+Correct ONLY the length of this scheduled Georgian post using the verified evidence.
+Count title and body together; the target is ${target.minWords}-${target.maxWords}
+space-separated words, aiming for ${midpoint}. The first draft had ${wordCount} words.
+Add concise supported context if short; remove secondary detail if long. Preserve all facts,
+attributions, claim_ids and source_ids exactly. Do not add filler or new claims. Keep the
+title plus body below 950 UTF-16 units. Output only the required JSON object.`,
+            {evidence:packet,article:current,word_count:wordCount,edition_targets:target},articleSchema);
+        },async revised=>{
+          const polished=polishGeorgianArticle(revised);
+          validateArticle(polished,packet,sources);
+          requireGeorgianQuality(polished);
+          return polished;
+        });
+        stage='source-backed-draft';
+      }
       if(scheduled){
         stage='scheduled-length-check';
         article=validateScheduledDraft(article,edition);
