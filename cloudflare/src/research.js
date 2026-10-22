@@ -84,28 +84,33 @@ export function isEditorialCandidateFailure(error) {
   return error instanceof Halt && EDITORIAL_CANDIDATE_FAILURE.test(error.message);
 }
 
-// At most one evidence-bound length correction per candidate. A persistent
-// miss moves to the next publisher story instead of restarting the whole job.
-export async function repairScheduledLengthOnce(article,edition,revise,normalize=value=>value,maxCaptionUnits=1024) {
-  const withinWords=meetsEditionWordTarget(article,edition);
-  if(withinWords && articleText(article).length<=maxCaptionUnits)return article;
-  const target=editionDetails(edition),wordCount=editionWordCount(article);
-  const revised=await revise(article,{target,wordCount});
-  // The correction model edits only text. Evidence references always come from
-  // the already-validated draft, so model output can never detach or alter them.
-  const current=await normalize({...revised,claim_ids:article.claim_ids,source_ids:article.source_ids});
+// Two bounded, evidence-bound length corrections absorb model counting misses;
+// a persistent miss moves to the next publisher story without restarting the job.
+export async function repairScheduledLengthOnce(article,edition,revise,normalize=value=>value,maxCaptionUnits=1024,maxCorrections=2) {
+  let current=article;
+  const target=editionDetails(edition);
+  for(let attempt=1;attempt<=maxCorrections;attempt++) {
+    if(meetsEditionWordTarget(current,edition) && articleText(current).length<=maxCaptionUnits)return current;
+    const wordCount=editionWordCount(current);
+    const revised=await revise(current,{target,wordCount,attempt});
+    // The correction model edits only text. Evidence references always come
+    // from the already-validated draft, so model output can never alter them.
+    current=await normalize({...revised,claim_ids:article.claim_ids,source_ids:article.source_ids});
+  }
   if(!meetsEditionWordTarget(current,edition))
     throw new Halt(`Scheduled draft length outside ${target.minWords}-${target.maxWords} words (got ${editionWordCount(current)}; ${articleText(current).length} UTF-16 units)`);
   if(articleText(current).length>maxCaptionUnits)
     throw new Halt('Draft exceeds the photo caption limit');
   return current;
 }
-export function scheduledCorrectionGuidance(article,edition) {
+export function scheduledCorrectionGuidance(article,edition,attempt=1) {
   const target=editionDetails(edition),wordCount=editionWordCount(article);
   if(meetsEditionWordTarget(article,edition))
     return `The current draft already meets the ${target.minWords}-${target.maxWords} word range at ${wordCount} words. Keep EXACTLY ${wordCount} whitespace-separated words while tightening phrasing to fit 1024 UTF-16 units. Do not remove a supported fact.`;
-  const midpoint=Math.round((target.minWords+target.maxWords)/2);
-  return `The current draft has ${wordCount} words. Reach ${target.minWords}-${target.maxWords} whitespace-separated words, aiming for ${midpoint}, and fit within 1024 UTF-16 units. Count title and body together.`;
+  const midpoint=Math.round((target.minWords+target.maxWords)/2),delta=midpoint-wordCount;
+  return attempt>1
+    ? `The previous correction still has ${wordCount} words. Write EXACTLY ${midpoint} whitespace-separated words total (title and body together): add ${Math.max(0,delta)} supported words or remove ${Math.max(0,-delta)}. Use only facts in the evidence; fit within 1024 UTF-16 units.`
+    : `The current draft has ${wordCount} words. Reach ${target.minWords}-${target.maxWords} whitespace-separated words, aiming for exactly ${midpoint}, and fit within 1024 UTF-16 units. Count title and body together.`;
 }
 export function validateScheduledDraft(article,edition) {
   if(!meetsEditionWordTarget(article,edition)) {
@@ -717,9 +722,9 @@ Do not pad word counts. Output ONLY the required JSON object.`,
       requireGeorgianQuality(article);
       if(scheduled && (!meetsEditionWordTarget(article,edition)||articleText(article).length>1024)){
         stage='scheduled-length-correction';
-        await store.requireCallCapacity(budgetedModelConfig.callLimit,1);
-        article=await repairScheduledLengthOnce(article,edition,async(current,{target,wordCount})=>{
-          const guidance=scheduledCorrectionGuidance(current,edition);
+        article=await repairScheduledLengthOnce(article,edition,async(current,{target,wordCount,attempt})=>{
+          await store.requireCallCapacity(budgetedModelConfig.callLimit,1);
+          const guidance=scheduledCorrectionGuidance(current,edition,attempt);
           return llm(budgetedModelConfig,store,`${GEORGIAN_STYLE_EXAMPLES}
 
 Correct ONLY the length of this scheduled Georgian post using the verified evidence.
