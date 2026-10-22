@@ -55,7 +55,7 @@ test('one scheduled correction runs when a word-count-valid draft exceeds Telegr
   const long={title:'სათაური',body:Array(99).fill('ზ'.repeat(12)).join(' '),claim_ids:[0],source_ids:[0]};
   assert.equal(meetsEditionWordTarget(long,'evening'),true);
   assert.ok((long.title+'\n\n'+long.body).length>1024);
-  const withinApiLimit={title:'სათაური',body:Array(99).fill('abcdefghij').join(' '),claim_ids:[0],source_ids:[0]};
+  const withinApiLimit={title:'სათაური',body:Array(99).fill('abcdefghi').join(' '),claim_ids:[0],source_ids:[0]};
   assert.equal(meetsEditionWordTarget(withinApiLimit,'evening'),true);
   assert.ok((withinApiLimit.title+'\n\n'+withinApiLimit.body).length>950);
   assert.ok((withinApiLimit.title+'\n\n'+withinApiLimit.body).length<=1024);
