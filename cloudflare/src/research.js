@@ -77,6 +77,7 @@ export function attributePublisherClaims(packet) {
 }
 
 const articleSchema = object({title:s,body:s,claim_ids:array(integer),source_ids:array(integer)});
+const articleTextSchema = object({title:s,body:s});
 const checkSchema = object({passed:bool,unsupported_claims:array(s),missing_attributions:array(s)});
 const EDITORIAL_CANDIDATE_FAILURE=/^(Duplicate underlying event|Conflicting evidence|Insufficient evidence|Incomplete source assessment|Unknown or stale source publication date|Source publication date conflicts|Source origin mapping conflict|Invalid claim|Evidence quote not in retrieved source|Inconsistent evidence origins|Independent corroboration missing|Attribution missing|Unknown source excerpt ID|Invalid article|Missing evidence source link|Unknown article claim|Unknown article source|Draft exceeds the photo caption limit|Source contains no citable excerpts|Scheduled draft length outside|ქართული ტექსტის ხარისხის შემოწმება ვერ გაიარა)/;
 export function isEditorialCandidateFailure(error) {
@@ -89,10 +90,9 @@ export async function repairScheduledLengthOnce(article,edition,revise,normalize
   if(meetsEditionWordTarget(article,edition))return article;
   const target=editionDetails(edition),wordCount=editionWordCount(article);
   const revised=await revise(article,{target,wordCount});
-  if(JSON.stringify(revised.claim_ids)!==JSON.stringify(article.claim_ids) ||
-     JSON.stringify(revised.source_ids)!==JSON.stringify(article.source_ids))
-    throw new Halt('Scheduled length revision changed verified source or claim IDs');
-  const current=await normalize(revised);
+  // The correction model edits only text. Evidence references always come from
+  // the already-validated draft, so model output can never detach or alter them.
+  const current=await normalize({...revised,claim_ids:article.claim_ids,source_ids:article.source_ids});
   if(!meetsEditionWordTarget(current,edition))
     throw new Halt(`Scheduled draft length outside ${target.minWords}-${target.maxWords} words`);
   return current;
@@ -712,7 +712,7 @@ space-separated words, aiming for ${midpoint}. The first draft had ${wordCount} 
 Add concise supported context if short; remove secondary detail if long. Preserve all facts,
 attributions, claim_ids and source_ids exactly. Do not add filler or new claims. Keep the
 title plus body below 950 UTF-16 units. Output only the required JSON object.`,
-            {evidence:packet,article:current,word_count:wordCount,edition_targets:target},articleSchema);
+            {evidence:packet,article:current,word_count:wordCount,edition_targets:target},articleTextSchema);
         },async revised=>{
           const polished=polishGeorgianArticle(revised);
           validateArticle(polished,packet,sources);
