@@ -86,8 +86,9 @@ export function isEditorialCandidateFailure(error) {
 
 // At most one evidence-bound length correction per candidate. A persistent
 // miss moves to the next publisher story instead of restarting the whole job.
-export async function repairScheduledLengthOnce(article,edition,revise,normalize=value=>value) {
-  if(meetsEditionWordTarget(article,edition))return article;
+export async function repairScheduledLengthOnce(article,edition,revise,normalize=value=>value,maxCaptionUnits=950) {
+  const withinWords=meetsEditionWordTarget(article,edition);
+  if(withinWords && articleText(article).length<=maxCaptionUnits)return article;
   const target=editionDetails(edition),wordCount=editionWordCount(article);
   const revised=await revise(article,{target,wordCount});
   // The correction model edits only text. Evidence references always come from
@@ -95,6 +96,8 @@ export async function repairScheduledLengthOnce(article,edition,revise,normalize
   const current=await normalize({...revised,claim_ids:article.claim_ids,source_ids:article.source_ids});
   if(!meetsEditionWordTarget(current,edition))
     throw new Halt(`Scheduled draft length outside ${target.minWords}-${target.maxWords} words`);
+  if(articleText(current).length>maxCaptionUnits)
+    throw new Halt('Draft exceeds the photo caption limit');
   return current;
 }
 export function validateScheduledDraft(article,edition) {
@@ -108,7 +111,7 @@ export function validateScheduledDraft(article,edition) {
 export function draftLengthGuidance(edition,scheduled) {
   if(!scheduled)return 'Prefer 1-3 very short clear Georgian sentences over 3 paragraphs of filler.';
   const target=editionDetails(edition);
-  return `SCHEDULED EDITION: title plus body MUST contain ${target.minWords}-${target.maxWords} whitespace-separated words. Aim for ${Math.round((target.minWords+target.maxWords)/2)} words in 2-3 concise paragraphs. Count words separated by spaces; punctuation stays attached to its word. Include distinct facts supported by the evidence. One length-only correction is available if the first draft misses; never pad or add unsupported inference.`;
+  return `SCHEDULED EDITION: title plus body MUST contain ${target.minWords}-${target.maxWords} whitespace-separated words and stay at or below 950 UTF-16 units for Telegram's photo caption. Aim for ${Math.round((target.minWords+target.maxWords)/2)} words in 2-3 concise paragraphs. Count words separated by spaces; punctuation stays attached to its word. Include distinct facts supported by the evidence. One correction is available if either limit is missed; never pad or add unsupported inference.`;
 }
 
 export async function llm(c, store, instruction, data, schema = null, search = false) {
@@ -551,7 +554,13 @@ Return [] only if no recent relevant article exists in the catalog.`,
   const candidates=rankedCandidates(discovery.candidates,editorialCatalog.map(entry=>entry.url),c,history);
   stage='source-fetch';
   const cache=new Map(),attempts=[];
-  let lastEditorialError='No suitable news story with a publisher photo was found';
+  let lastEditorialError='No suitable news story with a publisher photo was found',lastFailureRank=0;
+  const rememberEditorialFailure=message=>{
+    const rank=/Draft exceeds the photo caption limit|Scheduled draft length outside/.test(message)?5:
+      /No usable publisher photo/.test(message)?4:
+      /No recent readable publisher article with a confirmed publication date/.test(message)?3:2;
+    if(rank>=lastFailureRank){lastEditorialError=message;lastFailureRank=rank;}
+  };
   for(const candidate of candidates) {
     const collected=[],failures=[];
     for(const url of candidate.source_urls) {
@@ -578,14 +587,14 @@ Return [] only if no recent relevant article exists in the catalog.`,
       dated=requireDatedSources(collected,c);
     } catch(error) {
       if(!(error instanceof Halt))throw error;
-      attempt.rejected=error.message;lastEditorialError=error.message;continue;
+      attempt.rejected=error.message;rememberEditorialFailure(error.message);continue;
     }
     // Never give the owner a caption without a real publisher-supplied image.
     // Prefer just ONE dated and illustrated reputable article for concise attribution.
     const primary=dated.find(source=>source.image);
     if(!primary) {
       attempt.rejected='No usable publisher photo';
-      lastEditorialError=attempt.rejected;
+      rememberEditorialFailure(attempt.rejected);
       continue;
     }
     if(directSearch && primary.publication?.published_at)
@@ -609,7 +618,7 @@ Answer based ONLY on the exact retrieved article, its title and excerpt. Be stri
       const topicFailure=topicRelevanceFailure(query,verdict);
       if(topicFailure){
         attempt.rejected=topicFailure;
-        lastEditorialError=attempt.rejected;
+        rememberEditorialFailure(attempt.rejected);
         continue;
       }
     }
@@ -699,7 +708,7 @@ Do not pad word counts. Output ONLY the required JSON object.`,
         grammarIssues=georgianQualityIssues(article);
       }
       requireGeorgianQuality(article);
-      if(scheduled && !meetsEditionWordTarget(article,edition)){
+      if(scheduled && (!meetsEditionWordTarget(article,edition)||articleText(article).length>950)){
         stage='scheduled-length-correction';
         await store.requireCallCapacity(budgetedModelConfig.callLimit,1);
         article=await repairScheduledLengthOnce(article,edition,async(current,{target,wordCount})=>{
@@ -708,8 +717,8 @@ Do not pad word counts. Output ONLY the required JSON object.`,
 
 Correct ONLY the length of this scheduled Georgian post using the verified evidence.
 Count title and body together; the target is ${target.minWords}-${target.maxWords}
-space-separated words, aiming for ${midpoint}. The first draft had ${wordCount} words.
-Add concise supported context if short; remove secondary detail if long. Preserve all facts,
+space-separated words, aiming for ${midpoint}. The first draft had ${wordCount} words and may exceed the 950 UTF-16 unit photo-caption limit.
+Add concise supported context if short; remove secondary detail or tighten wording if long. Preserve all facts,
 attributions, claim_ids and source_ids exactly. Do not add filler or new claims. Keep the
 title plus body below 950 UTF-16 units. Output only the required JSON object.`,
             {evidence:packet,article:current,word_count:wordCount,edition_targets:target},articleTextSchema);
@@ -737,7 +746,7 @@ title plus body below 950 UTF-16 units. Output only the required JSON object.`,
       // quota exhaustion or unexpected runtime failures. No unbounded AI retries.
       if(!isEditorialCandidateFailure(error))throw error;
       attempt.rejected=error.message;
-      lastEditorialError=error.message;
+      rememberEditorialFailure(error.message);
       stage='source-fetch';
     }
   }
