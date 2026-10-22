@@ -95,10 +95,17 @@ export async function repairScheduledLengthOnce(article,edition,revise,normalize
   // the already-validated draft, so model output can never detach or alter them.
   const current=await normalize({...revised,claim_ids:article.claim_ids,source_ids:article.source_ids});
   if(!meetsEditionWordTarget(current,edition))
-    throw new Halt(`Scheduled draft length outside ${target.minWords}-${target.maxWords} words`);
+    throw new Halt(`Scheduled draft length outside ${target.minWords}-${target.maxWords} words (got ${editionWordCount(current)}; ${articleText(current).length} UTF-16 units)`);
   if(articleText(current).length>maxCaptionUnits)
     throw new Halt('Draft exceeds the photo caption limit');
   return current;
+}
+export function scheduledCorrectionGuidance(article,edition) {
+  const target=editionDetails(edition),wordCount=editionWordCount(article);
+  if(meetsEditionWordTarget(article,edition))
+    return `The current draft already meets the ${target.minWords}-${target.maxWords} word range at ${wordCount} words. Keep EXACTLY ${wordCount} whitespace-separated words while tightening phrasing to fit 1024 UTF-16 units. Do not remove a supported fact.`;
+  const midpoint=Math.round((target.minWords+target.maxWords)/2);
+  return `The current draft has ${wordCount} words. Reach ${target.minWords}-${target.maxWords} whitespace-separated words, aiming for ${midpoint}, and fit within 1024 UTF-16 units. Count title and body together.`;
 }
 export function validateScheduledDraft(article,edition) {
   if(!meetsEditionWordTarget(article,edition)) {
@@ -712,15 +719,13 @@ Do not pad word counts. Output ONLY the required JSON object.`,
         stage='scheduled-length-correction';
         await store.requireCallCapacity(budgetedModelConfig.callLimit,1);
         article=await repairScheduledLengthOnce(article,edition,async(current,{target,wordCount})=>{
-          const midpoint=Math.round((target.minWords+target.maxWords)/2);
+          const guidance=scheduledCorrectionGuidance(current,edition);
           return llm(budgetedModelConfig,store,`${GEORGIAN_STYLE_EXAMPLES}
 
 Correct ONLY the length of this scheduled Georgian post using the verified evidence.
-Count title and body together; the target is ${target.minWords}-${target.maxWords}
-space-separated words, aiming for ${midpoint}. The first draft had ${wordCount} words and may exceed the 1024 UTF-16 unit photo-caption limit.
-Add concise supported context if short; remove secondary detail or tighten wording if long. Preserve all facts,
-attributions, claim_ids and source_ids exactly. Do not add filler or new claims. Keep the
-title plus body below 1024 UTF-16 units. Output only the required JSON object.`,
+${guidance}
+Preserve all facts, attributions, claim_ids and source_ids exactly. Do not add filler or new claims.
+Output only the required JSON object.`,
             {evidence:packet,article:current,word_count:wordCount,edition_targets:target},articleTextSchema);
         },async revised=>{
           const polished=polishGeorgianArticle(revised);
