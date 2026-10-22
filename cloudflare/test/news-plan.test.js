@@ -74,7 +74,7 @@ test('one scheduled correction runs when a word-count-valid draft exceeds Telegr
   assert.ok((withinApiLimit.title+'\n\n'+withinApiLimit.body).length>950);
   assert.ok((withinApiLimit.title+'\n\n'+withinApiLimit.body).length<=1024);
   assert.match(scheduledCorrectionGuidance(withinApiLimit,'evening'),/Keep EXACTLY 100 whitespace-separated words/);
-  assert.match(scheduledCorrectionGuidance({title:'სათაური',body:'მოკლე ტექსტი'},'evening'),/Reach 90-115 whitespace-separated words, aiming for 103/);
+  assert.match(scheduledCorrectionGuidance({title:'სათაური',body:'მოკლე ტექსტი'},'evening'),/Reach 90-115 whitespace-separated words, aiming for exactly 103/);
   let unnecessaryCorrection=0;
   assert.equal(await repairScheduledLengthOnce(withinApiLimit,'evening',async()=>{
     unnecessaryCorrection++;return withinApiLimit;
