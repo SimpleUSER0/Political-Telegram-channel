@@ -74,7 +74,8 @@ test('one scheduled correction runs when a word-count-valid draft exceeds Telegr
 test('scheduled draft instructions specify one midpoint and bounded correction',()=>{
   const scheduled=draftLengthGuidance('evening',true),manual=draftLengthGuidance('evening',false);
   assert.match(scheduled,/90-115 whitespace-separated words/);
-  assert.match(scheduled,/One length-only correction is available/);
+  assert.match(scheduled,/One correction is available if either limit is missed/);
+  assert.match(scheduled,/950 UTF-16 units for Telegram's photo caption/);
   assert.match(manual,/1-3 very short clear Georgian sentences/);
   assert.doesNotMatch(scheduled,/1-3 very short clear Georgian sentences/);
 });
