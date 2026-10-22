@@ -86,7 +86,7 @@ export function isEditorialCandidateFailure(error) {
 
 // At most one evidence-bound length correction per candidate. A persistent
 // miss moves to the next publisher story instead of restarting the whole job.
-export async function repairScheduledLengthOnce(article,edition,revise,normalize=value=>value,maxCaptionUnits=950) {
+export async function repairScheduledLengthOnce(article,edition,revise,normalize=value=>value,maxCaptionUnits=1024) {
   const withinWords=meetsEditionWordTarget(article,edition);
   if(withinWords && articleText(article).length<=maxCaptionUnits)return article;
   const target=editionDetails(edition),wordCount=editionWordCount(article);
@@ -111,7 +111,7 @@ export function validateScheduledDraft(article,edition) {
 export function draftLengthGuidance(edition,scheduled) {
   if(!scheduled)return 'Prefer 1-3 very short clear Georgian sentences over 3 paragraphs of filler.';
   const target=editionDetails(edition);
-  return `SCHEDULED EDITION: title plus body MUST contain ${target.minWords}-${target.maxWords} whitespace-separated words and stay at or below 950 UTF-16 units for Telegram's photo caption. Aim for ${Math.round((target.minWords+target.maxWords)/2)} words in 2-3 concise paragraphs. Count words separated by spaces; punctuation stays attached to its word. Include distinct facts supported by the evidence. One correction is available if either limit is missed; never pad or add unsupported inference.`;
+  return `SCHEDULED EDITION: title plus body MUST contain ${target.minWords}-${target.maxWords} whitespace-separated words and stay at or below 1024 UTF-16 units for Telegram's photo caption. Aim for ${Math.round((target.minWords+target.maxWords)/2)} words in 2-3 concise paragraphs. Count words separated by spaces; punctuation stays attached to its word. Include distinct facts supported by the evidence. One correction is available if either limit is missed; never pad or add unsupported inference.`;
 }
 
 export async function llm(c, store, instruction, data, schema = null, search = false) {
@@ -669,13 +669,13 @@ referring to the European Union: use 'ევროკავშირი' or 'ე
 over 'საქმიანობს შესაძლებლობაზე'. Do not change facts or add interpretation.
 Every factual statement must map to claim_ids; include its supporting source_id.
 Never put source URLs or labels in the text: Telegram adds one source-button separately.
-Title + body MUST fit within 950 UTF-16 code units (Telegram photo caption).
+Title + body MUST fit within 1024 UTF-16 code units (Telegram photo caption).
 Only use the photo already retrieved from the source; never generate an image.
 Format FLASH is brief, QUICK concise, STANDARD compact with context, DEEP as detailed
 as the photo caption permits. For scheduled posts, target the edition_targets word range
 counting title and body together. Use the midpoint when evidence supports it; never add
 unsupported details or filler just to reach the range.
-Aim for 600-900 UTF-16 units in STANDARD when evidence permits, never exceeding 950.
+Aim for 600-900 UTF-16 units in STANDARD when evidence permits, never exceeding 1024.
 For evening, add helpful direct context; for breaking, state only confirmed new facts.
 Do not append metadata, pseudo-citations or numbered IDs.`,
         {verification:packet,format,edition,edition_targets:editionDetails(edition)},articleSchema);
@@ -708,7 +708,7 @@ Do not pad word counts. Output ONLY the required JSON object.`,
         grammarIssues=georgianQualityIssues(article);
       }
       requireGeorgianQuality(article);
-      if(scheduled && (!meetsEditionWordTarget(article,edition)||articleText(article).length>950)){
+      if(scheduled && (!meetsEditionWordTarget(article,edition)||articleText(article).length>1024)){
         stage='scheduled-length-correction';
         await store.requireCallCapacity(budgetedModelConfig.callLimit,1);
         article=await repairScheduledLengthOnce(article,edition,async(current,{target,wordCount})=>{
@@ -717,10 +717,10 @@ Do not pad word counts. Output ONLY the required JSON object.`,
 
 Correct ONLY the length of this scheduled Georgian post using the verified evidence.
 Count title and body together; the target is ${target.minWords}-${target.maxWords}
-space-separated words, aiming for ${midpoint}. The first draft had ${wordCount} words and may exceed the 950 UTF-16 unit photo-caption limit.
+space-separated words, aiming for ${midpoint}. The first draft had ${wordCount} words and may exceed the 1024 UTF-16 unit photo-caption limit.
 Add concise supported context if short; remove secondary detail or tighten wording if long. Preserve all facts,
 attributions, claim_ids and source_ids exactly. Do not add filler or new claims. Keep the
-title plus body below 950 UTF-16 units. Output only the required JSON object.`,
+title plus body below 1024 UTF-16 units. Output only the required JSON object.`,
             {evidence:packet,article:current,word_count:wordCount,edition_targets:target},articleTextSchema);
         },async revised=>{
           const polished=polishGeorgianArticle(revised);
@@ -734,7 +734,7 @@ title plus body below 950 UTF-16 units. Output only the required JSON object.`,
         stage='scheduled-length-check';
         article=validateScheduledDraft(article,edition);
       }
-      if(articleText(article).length>950)throw new Halt('Draft exceeds the photo caption limit');
+      if(articleText(article).length>1024)throw new Halt('Draft exceeds the photo caption limit');
       const check={passed:true,unsupported_claims:[],missing_attributions:[],method:'publisher-review-and-local-validation'};
       const payload={article,verification:packet,sources,selection:candidate,format,edition,scheduled,manual_topic:manual,
         fact_check:check,checked_at:new Date().toISOString(),media:primary.image,
@@ -798,7 +798,7 @@ Apply exactly this owner-selected edit: ${EDIT_MODE_INSTRUCTIONS[mode]}
 ${scheduleRule}
 Use ONLY the supplied existing article and verified evidence packet. Keep all facts,
 dates, names, attribution and uncertainty accurate. Preserve claim_ids and source_ids
-exactly, in the same order. The full title and body must be under 950 UTF-16 units.
+exactly, in the same order. The full title and body must be under 1024 UTF-16 units.
 Write natural Georgian. Never invent details or remove a qualification that changes meaning.
 Output only the required JSON object.`,
       {article:original,evidence:payload.verification,edition_targets:target,mode},articleSchema);
