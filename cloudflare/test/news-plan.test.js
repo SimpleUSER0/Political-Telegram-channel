@@ -30,7 +30,7 @@ test('scheduled post word targets match each agreed edition and count title plus
     assert.equal(meetsEditionWordTarget(long,edition),false);
   }
 });
-test('one length correction preserves original evidence IDs and a second miss fails locally',async()=>{
+test('bounded corrections preserve evidence IDs and persistent misses fail locally',async()=>{
   const makeArticle=(count,claimIds=[0],sourceIds=[0])=>({title:'სათაური',body:Array(count-1).fill('ამბავი').join(' '),claim_ids:claimIds,source_ids:sourceIds});
   let calls=0;
   const corrected=await repairScheduledLengthOnce(makeArticle(20),'evening',async(_article,{target,wordCount})=>{
@@ -49,7 +49,21 @@ test('one length correction preserves original evidence IDs and a second miss fa
     assert.equal(isEditorialCandidateFailure(error),true);
     return true;
   });
-  assert.equal(calls,1);
+  assert.equal(calls,2);
+});
+test('second bounded correction uses the exact remaining word-count delta',async()=>{
+  const make=count=>({title:'სათაური',body:Array(count-1).fill('ამბავი').join(' '),claim_ids:[0],source_ids:[0]});
+  let calls=0;
+  const corrected=await repairScheduledLengthOnce(make(56),'evening',async(_article,{wordCount,attempt})=>{
+    calls++;
+    if(attempt===1){assert.equal(wordCount,56);return make(56);}
+    assert.equal(attempt,2);assert.equal(wordCount,56);
+    assert.match(scheduledCorrectionGuidance(_article,'evening',attempt),/add 47 supported words or remove 0/);
+    return make(103);
+  });
+  assert.equal(calls,2);
+  assert.equal(meetsEditionWordTarget(corrected,'evening'),true);
+  assert.deepEqual(corrected.claim_ids,[0]);
 });
 test('one scheduled correction runs when a word-count-valid draft exceeds Telegram caption size',async()=>{
   const long={title:'სათაური',body:Array(99).fill('ზ'.repeat(12)).join(' '),claim_ids:[0],source_ids:[0]};
@@ -80,7 +94,7 @@ test('one scheduled correction runs when a word-count-valid draft exceeds Telegr
   await assert.rejects(repairScheduledLengthOnce(long,'evening',async()=>{
     calls++;return long;
   }),/Draft exceeds the photo caption limit/);
-  assert.equal(calls,1);
+  assert.equal(calls,2);
 });
 test('scheduled draft instructions specify one midpoint and bounded correction',()=>{
   const scheduled=draftLengthGuidance('evening',true),manual=draftLengthGuidance('evening',false);
