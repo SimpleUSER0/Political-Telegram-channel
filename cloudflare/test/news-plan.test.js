@@ -30,18 +30,20 @@ test('scheduled post word targets match each agreed edition and count title plus
     assert.equal(meetsEditionWordTarget(long,edition),false);
   }
 });
-test('one evidence-preserving length correction is allowed; another miss fails locally',async()=>{
-  const makeArticle=count=>({title:'სათაური',body:Array(count-1).fill('ამბავი').join(' '),claim_ids:[0],source_ids:[0]});
+test('one length correction preserves original evidence IDs and a second miss fails locally',async()=>{
+  const makeArticle=(count,claimIds=[0],sourceIds=[0])=>({title:'სათაური',body:Array(count-1).fill('ამბავი').join(' '),claim_ids:claimIds,source_ids:sourceIds});
   let calls=0;
   const corrected=await repairScheduledLengthOnce(makeArticle(20),'evening',async(_article,{target,wordCount})=>{
     calls++;assert.equal(wordCount,20);assert.deepEqual([target.minWords,target.maxWords],[90,115]);
-    return makeArticle(100);
+    return makeArticle(100,[99],[42]);
   });
   assert.equal(calls,1);
+  assert.deepEqual(corrected.claim_ids,[0]);
+  assert.deepEqual(corrected.source_ids,[0]);
   assert.equal(validateScheduledDraft(corrected,'evening'),corrected);
   calls=0;
   await assert.rejects(repairScheduledLengthOnce(makeArticle(20),'evening',async()=>{
-    calls++;return makeArticle(20);
+    calls++;return makeArticle(20,[999],[888]);
   }),error=>{
     assert.match(error.message,/Scheduled draft length outside 90-115 words/);
     assert.equal(isEditorialCandidateFailure(error),true);
