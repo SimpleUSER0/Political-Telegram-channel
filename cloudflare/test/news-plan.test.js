@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {config} from '../src/core.js';
 import {env,fixture} from './helpers.js';
 import {schedule,scheduleBreaking,retryScheduledFailures,retryFailedDeliveries,recoverUndeliveredDrafts,drain} from '../src/worker.js';
-import {repairScheduledLengthOnce,validateScheduledDraft,isEditorialCandidateFailure,draftLengthGuidance} from '../src/research.js';
+import {repairScheduledLengthOnce,validateScheduledDraft,isEditorialCandidateFailure,draftLengthGuidance,scheduledCorrectionGuidance} from '../src/research.js';
 import {breakingCandidates,breakingEligible,editionAtHour,editionDetails,editionWordCount,meetsEditionWordTarget,localClock,
   newsroomBeat,rankEditorialEntries,REGULAR_HOURS} from '../src/news-plan.js';
 
@@ -59,6 +59,8 @@ test('one scheduled correction runs when a word-count-valid draft exceeds Telegr
   assert.equal(meetsEditionWordTarget(withinApiLimit,'evening'),true);
   assert.ok((withinApiLimit.title+'\n\n'+withinApiLimit.body).length>950);
   assert.ok((withinApiLimit.title+'\n\n'+withinApiLimit.body).length<=1024);
+  assert.match(scheduledCorrectionGuidance(withinApiLimit,'evening'),/Keep EXACTLY 100 whitespace-separated words/);
+  assert.match(scheduledCorrectionGuidance({title:'სათაური',body:'მოკლე ტექსტი'},'evening'),/Reach 90-115 whitespace-separated words, aiming for 103/);
   let unnecessaryCorrection=0;
   assert.equal(await repairScheduledLengthOnce(withinApiLimit,'evening',async()=>{
     unnecessaryCorrection++;return withinApiLimit;
