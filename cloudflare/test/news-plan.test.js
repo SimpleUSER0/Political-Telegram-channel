@@ -54,7 +54,16 @@ test('one length correction preserves original evidence IDs and a second miss fa
 test('one scheduled correction runs when a word-count-valid draft exceeds Telegram caption size',async()=>{
   const long={title:'სათაური',body:Array(99).fill('ზ'.repeat(12)).join(' '),claim_ids:[0],source_ids:[0]};
   assert.equal(meetsEditionWordTarget(long,'evening'),true);
-  assert.ok((long.title+'\n\n'+long.body).length>950);
+  assert.ok((long.title+'\n\n'+long.body).length>1024);
+  const withinApiLimit={title:'სათაური',body:Array(99).fill('abcdefghij').join(' '),claim_ids:[0],source_ids:[0]};
+  assert.equal(meetsEditionWordTarget(withinApiLimit,'evening'),true);
+  assert.ok((withinApiLimit.title+'\n\n'+withinApiLimit.body).length>950);
+  assert.ok((withinApiLimit.title+'\n\n'+withinApiLimit.body).length<=1024);
+  let unnecessaryCorrection=0;
+  assert.equal(await repairScheduledLengthOnce(withinApiLimit,'evening',async()=>{
+    unnecessaryCorrection++;return withinApiLimit;
+  }),withinApiLimit);
+  assert.equal(unnecessaryCorrection,0);
   let calls=0;
   const corrected=await repairScheduledLengthOnce(long,'evening',async()=>{
     calls++;
@@ -62,7 +71,7 @@ test('one scheduled correction runs when a word-count-valid draft exceeds Telegr
   });
   assert.equal(calls,1);
   assert.equal(meetsEditionWordTarget(corrected,'evening'),true);
-  assert.ok((corrected.title+'\n\n'+corrected.body).length<=950);
+  assert.ok((corrected.title+'\n\n'+corrected.body).length<=1024);
   assert.deepEqual(corrected.claim_ids,[0]);
   assert.deepEqual(corrected.source_ids,[0]);
   calls=0;
@@ -75,7 +84,7 @@ test('scheduled draft instructions specify one midpoint and bounded correction',
   const scheduled=draftLengthGuidance('evening',true),manual=draftLengthGuidance('evening',false);
   assert.match(scheduled,/90-115 whitespace-separated words/);
   assert.match(scheduled,/One correction is available if either limit is missed/);
-  assert.match(scheduled,/950 UTF-16 units for Telegram's photo caption/);
+  assert.match(scheduled,/1024 UTF-16 units for Telegram's photo caption/);
   assert.match(manual,/1-3 very short clear Georgian sentences/);
   assert.doesNotMatch(scheduled,/1-3 very short clear Georgian sentences/);
 });
